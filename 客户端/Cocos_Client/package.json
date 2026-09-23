@@ -1,0 +1,10 @@
+{
+  "name": "Test",
+  "uuid": "ee4fda6b-fedd-4d45-9e99-e39fb2f7d9dd",
+  "creator": {
+    "version": "3.8.7"
+  },
+  "MKFramework": {
+    "version": "v1.1.5"
+  }
+}

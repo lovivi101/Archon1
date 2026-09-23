@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repo Context Workflow"
+  short_description: "Read repo rules before edits"
+  default_prompt: "Use $repo-context-workflow to read repo rules, memory, and code index before searching or editing."

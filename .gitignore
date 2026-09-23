@@ -1,0 +1,31 @@
+# Local environment installers and database/tool bundles are not project source.
+Configure_environment/
+
+# Cocos Creator generated output and editor caches.
+客户端/Cocos_Client/library/
+客户端/Cocos_Client/temp/
+客户端/Cocos_Client/local/
+客户端/Cocos_Client/build/
+客户端/Cocos_Client/profiles/
+客户端/Cocos_Client/native/
+客户端/Cocos_Client/.vscode/
+客户端/Cocos_Client/.idea/
+
+# Dependencies and generated JavaScript output.
+**/node_modules/
+**/dist/
+**/.npm-cache/
+*.log
+
+# Local secrets and environment overrides.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Legacy Due runtime binaries/logs; keep source/configuration instead.
+服务器端/Due_Server/*.exe
+服务器端/Due_Server/*.log
+服务器端/Due_Server/*_err.log

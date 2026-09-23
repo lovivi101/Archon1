@@ -1,0 +1,44 @@
+[common]
+    [common.registry]
+        # etcd 注册中心
+        adapter = "etcd"
+        [common.registry.etcd]
+            endpoints = ["127.0.0.1:2379"]
+    [common.locator]
+        # redis 定位器
+        adapter = "redis"
+        [common.locator.redis]
+            addr = "127.0.0.1:6379"
+            db = 0
+
+[network]
+    [network.ws]
+        [network.ws.server]
+            # due WebSocket 服务器实际读取的监听地址
+            addr = ":8888"
+
+[registry]
+    [registry.etcd]
+        # due etcd 注册中心实际读取的地址
+        addrs = ["127.0.0.1:2379"]
+
+[locate]
+    [locate.redis]
+        # due redis 定位器实际读取的地址
+        addrs = ["127.0.0.1:6379"]
+        db = 0
+
+[cluster]
+    [cluster.node]
+        # due node 默认 codec 是 proto，Demo 客户端使用 JSON body
+        codec = "json"
+
+[gate]
+    [gate.server]
+        # 网关服务器配置
+        addr = ":8888"
+
+[node]
+    [node.server]
+        # 逻辑服务器配置
+        # 这里不需要 addr，它通过网关通讯

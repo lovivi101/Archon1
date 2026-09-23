@@ -1,0 +1,66 @@
+name: avalon
+
+x-log-policy: &log-policy
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-avalon}
+      POSTGRES_USER: ${POSTGRES_USER:-avalon}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique strong POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+    logging: *log-policy
+
+  migrate:
+    build: .
+    command: ["node", "scripts/migrate.js"]
+    restart: "no"
+    environment: &db-env
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB:-avalon}
+      PGUSER: ${POSTGRES_USER:-avalon}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set a unique strong POSTGRES_PASSWORD in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    logging: *log-policy
+
+  server:
+    build: .
+    restart: unless-stopped
+    environment:
+      <<: *db-env
+      PORT: "8888"
+      LOG_JSON: "1"
+      NODE_ENV: production
+      AVALON_NIGHT_SECONDS: ${AVALON_NIGHT_SECONDS:-2}
+      AVALON_AI_TICK_MS: ${AVALON_AI_TICK_MS:-250}
+    ports:
+      - "${HOST_PORT:-8888}:8888"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8888/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *log-policy
+
+volumes:
+  pgdata:
