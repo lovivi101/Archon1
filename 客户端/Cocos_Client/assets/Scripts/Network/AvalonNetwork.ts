@@ -141,7 +141,13 @@ export class AvalonNetwork {
                 return;
             }
 
-            handlers.forEach((handler) => handler(packet.payload, packet.route));
+            Array.from(handlers).forEach((handler) => {
+                try {
+                    handler(packet.payload, packet.route);
+                } catch (error) {
+                    this.emitStatus("error", `路由 ${routeName(packet.route)} 处理失败：${error}`);
+                }
+            });
         } catch (error) {
             this.emitStatus("error", `消息解析失败：${error}`);
         }
@@ -150,6 +156,12 @@ export class AvalonNetwork {
     private emitStatus(state: ConnectionState, message: string): void {
         this._state = state;
         this._lastMessage = message;
-        this._statusHandlers.forEach((handler) => handler(state, message));
+        Array.from(this._statusHandlers).forEach((handler) => {
+            try {
+                handler(state, message);
+            } catch (error) {
+                console.error("Avalon network status listener failed", error);
+            }
+        });
     }
 }

@@ -9,6 +9,7 @@
 
 - `assets/Scripts/Game/AvalonGameTypes.ts`：Route、Role、GameStage、任务人数矩阵和展示名称。
 - `assets/Scripts/Game/AvalonGameState.ts`：客户端单例状态，兼容 Go 结构体字段和 JSON 小驼峰字段。
+- `assets/Scripts/Game/AvalonClientData.ts`：UI 无关的数据门面；绑定网络路由、更新状态、发起校验后的动作并提供快照订阅。
 - `assets/Scripts/Network/AvalonProtocol.ts`：due 默认 `seq + route + JSON body` 的编码/解码。
 - `assets/Scripts/Network/AvalonNetwork.ts`：WebSocket 连接、状态回调、route handler 注册和消息派发。
 - `服务器端/AvalonTsServer/src/server.ts`：NestJS 启动入口；`src/app.module.ts`：模块注册；`src/health.controller.ts`：健康检查；`src/game.gateway.ts`：WebSocket 连接/消息入口；`src/game.service.ts`：协议、房间和游戏逻辑；`scripts/smoke-test.js`：直接加载客户端网络类的联通烟测。

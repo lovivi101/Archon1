@@ -182,6 +182,7 @@ const all = mk.uiManage.get();
 - 运行时 UI 覆盖连接、登录、加入房间、准备、座位选择、队伍提交、投票、任务、刺杀、结算日志与本地 5 人演示局。
 - 本地 5 人演示局可在无服务端时推进完整流程：组队 -> 投票 -> 任务 -> 刺杀 -> 结算；联机模式仍优先走 WebSocket。
 - 数据状态集中在 `assets/Scripts/Game/AvalonGameState.ts`；协议枚举、身份、阶段、任务人数矩阵集中在 `assets/Scripts/Game/AvalonGameTypes.ts`。
+- UI 可通过 `assets/Scripts/Game/AvalonClientData.ts` 订阅数据事件和只读快照，不需要直接注册 WebSocket 路由；`AvalonGameState` 负责兼容服务端大小写字段、阶段重置和房间快照规范化。
 - WebSocket 封包集中在 `assets/Scripts/Network/AvalonProtocol.ts`，与 due 默认包格式保持一致：2 字节 little-endian seq + 2 字节 little-endian route + JSON body。
 - WebSocket 生命周期和 route 分发集中在 `assets/Scripts/Network/AvalonNetwork.ts`；UI 不直接操作原生 `WebSocket`。
 

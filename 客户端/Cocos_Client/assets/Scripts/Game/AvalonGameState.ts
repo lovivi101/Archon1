@@ -9,6 +9,9 @@ function asString(value: unknown, fallback = ""): string {
 }
 
 function asNumber(value: unknown, fallback: number): number {
+    if (value === undefined || value === null || value === "") {
+        return fallback;
+    }
     const result = Number(value);
     return Number.isFinite(result) ? result : fallback;
 }
@@ -18,7 +21,10 @@ function asBoolean(value: unknown, fallback = false): boolean {
         return fallback;
     }
 
-    return Boolean(value);
+    if (typeof value === "boolean") return value;
+    if (value === 1 || value === "1" || value === "true") return true;
+    if (value === 0 || value === "0" || value === "false") return false;
+    return fallback;
 }
 
 function asNumberArray(value: unknown, fallback: number[] = []): number[] {
@@ -26,7 +32,7 @@ function asNumberArray(value: unknown, fallback: number[] = []): number[] {
         return fallback.slice();
     }
 
-    return value.map((item) => asNumber(item, -1)).filter((item) => item >= 0);
+    return [...new Set(value.map((item) => asNumber(item, -1)).filter((item) => Number.isInteger(item) && item >= 0 && item < 10))];
 }
 
 function asBooleanArray(value: unknown, fallback: boolean[] = []): boolean[] {
@@ -34,7 +40,17 @@ function asBooleanArray(value: unknown, fallback: boolean[] = []): boolean[] {
         return fallback.slice();
     }
 
-    return value.map((item) => Boolean(item));
+    return value.map((item) => asBoolean(item));
+}
+
+function asRole(value: unknown, fallback = Role.Unknown): Role {
+    const role = asNumber(value, fallback);
+    return Number.isInteger(role) && role >= Role.Unknown && role <= Role.Mordred ? role as Role : fallback;
+}
+
+function asStage(value: unknown, fallback: GameStage): GameStage {
+    const stage = asNumber(value, fallback);
+    return Number.isInteger(stage) && stage >= GameStage.Preparing && stage <= GameStage.End ? stage as GameStage : fallback;
 }
 
 function normalizePlayer(raw: any): PlayerInfo {
@@ -43,8 +59,8 @@ function normalizePlayer(raw: any): PlayerInfo {
         nickname: asString(raw?.nickname ?? raw?.Nickname, "Player"),
         avatar: asString(raw?.avatar ?? raw?.Avatar),
         isReady: asBoolean(raw?.isReady ?? raw?.IsReady),
-        seatIndex: asNumber(raw?.seatIndex ?? raw?.Seat, -1),
-        role: asNumber(raw?.role ?? raw?.Role, Role.Unknown) as Role,
+        seatIndex: asNumber(raw?.seatIndex ?? raw?.SeatIndex ?? raw?.Seat, -1),
+        role: asRole(raw?.role ?? raw?.Role),
         isAi: asBoolean(raw?.isAi ?? raw?.IsAI),
     };
 }
@@ -88,6 +104,24 @@ export class AvalonGameState {
         return this.myId;
     }
 
+    public resetRoom(): void {
+        this.players = [];
+        this.stage = GameStage.Preparing;
+        this.captainSeat = -1;
+        this.currentRound = 1;
+        this.failedVotes = 0;
+        this.myRole = Role.Unknown;
+        this.visibleSeats = [];
+        this.selectedSeats = [];
+        this.missionResults = [];
+        this.lastVotes = [];
+        this.lastVotePassed = false;
+        this.timeoutSec = 0;
+        this.winReason = "";
+        this.isGoodWin = null;
+        this.isLocalDemo = false;
+    }
+
     public updateLogin(data: any): void {
         const userId = data?.userId ?? data?.UID ?? data?.uid;
         if (userId !== undefined && userId !== null) {
@@ -97,32 +131,45 @@ export class AvalonGameState {
 
     public updateRoomInfo(data: any): void {
         const room = data?.room ?? data?.Room ?? data;
-        if (!room) {
+        if (!room || typeof room !== "object" || Array.isArray(room)) {
             return;
         }
 
+        const nextRoomId = asString(room.roomId ?? room.ID ?? room.id, this.roomId);
+        const nextStage = asStage(room.stage ?? room.Stage, this.stage);
+        const enteringFreshRoom = nextStage === GameStage.Preparing
+            && (this.stage !== GameStage.Preparing || this.myRole !== Role.Unknown || this.isGoodWin !== null);
+        if (this.players.length > 0 && (nextRoomId !== this.roomId || enteringFreshRoom)) this.resetRoom();
         this.isLocalDemo = false;
-        this.roomId = asString(room.roomId ?? room.ID ?? room.id, this.roomId);
-        this.players = (room.players ?? room.Players ?? [])
+        this.roomId = nextRoomId;
+        const players = room.players ?? room.Players;
+        if (Array.isArray(players)) this.players = players
             .map((item: any) => normalizePlayer(item))
-            .filter((item: PlayerInfo) => item.seatIndex >= 0)
+            .filter((item: PlayerInfo) => item.seatIndex >= 0 && item.seatIndex < 10)
             .sort((a: PlayerInfo, b: PlayerInfo) => a.seatIndex - b.seatIndex);
-        this.stage = asNumber(room.stage ?? room.Stage, this.stage) as GameStage;
-        this.captainSeat = asNumber(room.currentCaptainIdx ?? room.CaptainIdx ?? room.captainSeat, this.captainSeat);
-        this.currentRound = asNumber(room.currentRound ?? room.Round, this.currentRound || 1);
-        this.failedVotes = asNumber(room.failedVotesCount ?? room.FailedVotes, this.failedVotes);
+        this.stage = nextStage;
+        this.captainSeat = asNumber(room.captainIdx ?? room.currentCaptainIdx ?? room.CaptainIdx ?? room.captainSeat, this.captainSeat);
+        this.currentRound = Math.max(1, Math.min(5, asNumber(room.round ?? room.currentRound ?? room.Round, this.currentRound || 1)));
+        this.failedVotes = Math.max(0, asNumber(room.failedVotes ?? room.failedVotesCount ?? room.FailedVotes, this.failedVotes));
         this.selectedSeats = asNumberArray(room.selectedSeats ?? room.SelectedSeats, this.selectedSeats);
-        this.missionResults = asBooleanArray(room.missionResults ?? room.MissionResults, this.missionResults);
+        this.missionResults = asBooleanArray(room.missionResults ?? room.MissionResults, this.missionResults).slice(0, 5);
         this.applyMyRoleToPlayer();
     }
 
     public applyStageChange(data: any): void {
-        this.stage = asNumber(data?.stage ?? data?.Stage, this.stage) as GameStage;
-        this.timeoutSec = asNumber(data?.timeout ?? data?.Timeout, 0);
+        this.stage = asStage(data?.stage ?? data?.Stage, this.stage);
+        this.timeoutSec = Math.max(0, asNumber(data?.timeout ?? data?.Timeout, 0));
+        if (this.stage === GameStage.Preparing) {
+            this.myRole = Role.Unknown;
+            this.visibleSeats = [];
+            this.lastVotes = [];
+            this.isGoodWin = null;
+            this.winReason = "";
+        }
     }
 
     public applyIdentity(data: any): void {
-        this.myRole = asNumber(data?.role ?? data?.Role, Role.Unknown) as Role;
+        this.myRole = asRole(data?.role ?? data?.Role);
         this.visibleSeats = asNumberArray(data?.visibleSeats ?? data?.VisibleSeats);
         this.applyMyRoleToPlayer();
     }
@@ -148,7 +195,7 @@ export class AvalonGameState {
         const result: MissionResultInfo = {
             isSuccess: asBoolean(data?.isSuccess ?? data?.IsSuccess),
             failCount: asNumber(data?.failCount ?? data?.FailCount, 0),
-            round: asNumber(data?.round ?? data?.Round, this.currentRound),
+            round: Math.max(1, Math.min(5, asNumber(data?.round ?? data?.Round, this.currentRound))),
         };
 
         this.missionResults[result.round - 1] = result.isSuccess;
@@ -177,6 +224,7 @@ export class AvalonGameState {
         const myId = this.ensureUserId();
         const nickname = this.nickname || "Guest";
 
+        this.resetRoom();
         this.roomId = this.roomId || "888";
         this.isLocalDemo = true;
         this.stage = GameStage.Proposing;

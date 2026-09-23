@@ -2,6 +2,7 @@
 
 ## 2026-09-23
 
+- 完善客户端数据层：新增 UI 无关的 `AvalonClientData` 门面与快照订阅，修正房间状态字段映射、局间重置、布尔/数组解析和网络包校验；目标 TypeScript 文件定向编译通过。未修改 `AvalonDemoApp.ts` 的 UI 构建代码。
 - 增加跨平台 Compose 部署、PostgreSQL 玩家资料表与自动 SQL 迁移、数据库健康检查、生产环境数据库必填、JSON 访问与 WebSocket 日志、Docker 日志轮转。异步登录后为单连接消息加顺序队列，并限制包大小。宿主机未安装 Docker，未完成容器级验证；`npm run test:smoke` 保持通过。
 - 应用户要求将 TypeScript 服务端迁至 NestJS 11；采用 platform-express + platform-ws，新增模块、健康控制器、WebSocket 网关，保留原 Cocos 二进制协议与现有游戏逻辑。`npm run build`、`npm run test:smoke` 通过；未替换机器上既有的 8888/8889 服务进程。
 - 新增 `服务器端/AvalonTsServer`，以 Express + ws 接通现有 Cocos 二进制 WebSocket 协议；支持健康检查、登录、加房、准备、角色下发和后续游戏动作。

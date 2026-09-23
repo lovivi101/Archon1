@@ -2,6 +2,8 @@
 
 ## 当前状态
 
+- 2026-09-23 客户端数据层新增 `AvalonClientData`：提供 start/stop、subscribe、snapshot，以及登录、进房、准备、组队、投票、任务、刺杀动作入口；UI 可以不直接操作 `AvalonNetwork`。`AvalonGameState` 已兼容服务端实际的 `captainIdx/round/failedVotes` 字段，并修复房间切换和准备阶段身份残留。
+- 协议层现在拒绝非法路由、损坏 JSON 和超过 64 KiB 的包；网络层对单个路由处理器和状态订阅器做隔离，单个 UI 回调抛错不会阻断其他监听者。
 - 2026-09-23 新增 Docker Compose 部署：PostgreSQL 17 + 自动迁移 + NestJS；玩家资料写入数据库，生产环境缺少 `PGHOST` 会拒绝启动。Compose 日志按 10 MB × 5 轮转，服务端在 `LOG_JSON=1` 时输出结构化日志。当前工作机没有 `docker` 命令，因此尚未实启验证镜像/容器；已通过本机 TypeScript 编译和无数据库模式的 WebSocket 烟测。
 - 登录现在是异步数据库写入；WebSocket 网关对同一连接按收到顺序处理消息，防止紧接登录的进房请求抢跑。二进制包上限 64 KiB。
 - 数据库只存玩家资料，不提供可信登录鉴权；房间与对局仍是单实例内存状态，生产发布还需鉴权、WSS、备份及完整对局测试。

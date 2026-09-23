@@ -10,6 +10,7 @@ export interface DecodedPacket {
 }
 
 const MAX_PACKET_SEQ = 32767;
+export const MAX_PACKET_BYTES = 65536;
 let packetSeq = 0;
 
 function nextPacketSeq(): number {
@@ -18,8 +19,14 @@ function nextPacketSeq(): number {
 }
 
 export function encodePacket(route: Route | number, payload: unknown): ArrayBuffer {
+    if (!Number.isInteger(route) || route < 0 || route > 65535) {
+        throw new Error(`非法路由：${route}`);
+    }
     const payloadText = JSON.stringify(payload ?? {});
     const payloadData = new TextEncoder().encode(payloadText);
+    if (payloadData.byteLength + 4 > MAX_PACKET_BYTES) {
+        throw new Error(`数据包过大：${payloadData.byteLength + 4} bytes`);
+    }
     const data = new Uint8Array(4 + payloadData.length);
     const view = new DataView(data.buffer);
 
@@ -30,7 +37,7 @@ export function encodePacket(route: Route | number, payload: unknown): ArrayBuff
 }
 
 export function decodeArrayBufferPacket(data: ArrayBuffer): DecodedPacket | null {
-    if (!data || data.byteLength < 4) {
+    if (!data || data.byteLength < 4 || data.byteLength > MAX_PACKET_BYTES) {
         return null;
     }
 
@@ -39,9 +46,12 @@ export function decodeArrayBufferPacket(data: ArrayBuffer): DecodedPacket | null
     const route = view.getUint16(2, true);
     const payloadBytes = data.slice(4);
     const payloadText = new TextDecoder().decode(payloadBytes);
-    const payload = payloadText ? JSON.parse(payloadText) : {};
-
-    return { seq, route, payload };
+    try {
+        const payload = payloadText ? JSON.parse(payloadText) : {};
+        return { seq, route, payload };
+    } catch {
+        return null;
+    }
 }
 
 export function decodeTextPacket(text: string): DecodedPacket | null {
@@ -49,15 +59,12 @@ export function decodeTextPacket(text: string): DecodedPacket | null {
         return null;
     }
 
-    const data = JSON.parse(text);
-    const route = Number(data.route ?? data.Route ?? data.cmd ?? data.Cmd);
-    if (!Number.isFinite(route)) {
+    try {
+        const data = JSON.parse(text);
+        const route = Number(data.route ?? data.Route ?? data.cmd ?? data.Cmd);
+        if (!Number.isInteger(route) || route < 0 || route > 65535) return null;
+        return { seq: Number(data.seq ?? data.Seq ?? 0), route, payload: data.data ?? data.Data ?? data.payload ?? data.Payload ?? data };
+    } catch {
         return null;
     }
-
-    return {
-        seq: Number(data.seq ?? data.Seq ?? 0),
-        route,
-        payload: data.data ?? data.Data ?? data.payload ?? data.Payload ?? data,
-    };
 }
