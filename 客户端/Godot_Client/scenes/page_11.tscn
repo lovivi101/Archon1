@@ -1,0 +1,22 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/views/page_view.gd" id="1"]
+[ext_resource type="Texture2D" path="res://assets/ui/bg-mission-table-750x1334.png" id="2"]
+
+[node name="Page11" type="Control"]
+layout_mode = 3
+offset_right = 750.0
+offset_bottom = 1334.0
+texture_filter = 4
+clip_contents = true
+script = ExtResource("1")
+page_id = 11
+
+[node name="Background" type="TextureRect" parent="."]
+layout_mode = 0
+offset_right = 750.0
+offset_bottom = 1334.0
+mouse_filter = 2
+texture = ExtResource("2")
+expand_mode = 1
+stretch_mode = 5

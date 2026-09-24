@@ -284,8 +284,9 @@ function handlePropose(client: ClientConnection, payload: Record<string, any>): 
 
 function handleVote(client: ClientConnection, payload: Record<string, any>): void {
     if (!client.userId) return;
+    if (typeof payload.approve !== "boolean") return;
     const userId = client.userId;
-    const result = room.vote(userId, Boolean(payload.approve));
+    const result = room.vote(userId, payload.approve);
     if (!result.finished) {
         return;
     }
@@ -301,8 +302,9 @@ function handleVote(client: ClientConnection, payload: Record<string, any>): voi
 
 function handleMission(client: ClientConnection, payload: Record<string, any>): void {
     if (!client.userId) return;
+    if (typeof payload.success !== "boolean") return;
     const userId = client.userId;
-    const result = room.mission(userId, Boolean(payload.success));
+    const result = room.mission(userId, payload.success);
     if (!result.finished) {
         return;
     }
@@ -323,12 +325,12 @@ function handleMission(client: ClientConnection, payload: Record<string, any>): 
 function handleAssassinate(client: ClientConnection, payload: Record<string, any>): void {
     if (!client.userId) return;
     const userId = client.userId;
-    if (!room.isBadPlayer(userId) || room.stage !== Stage.Assassinating) {
+    if (room.players.find((player) => player.userId === userId)?.role !== Role.Assassin || room.stage !== Stage.Assassinating) {
         return;
     }
     const targetSeat = Number(payload.targetSeat);
     const target = room.players[targetSeat];
-    if (!target) {
+    if (!target || room.isBadRole(target.role)) {
         return;
     }
     const goodWin = target.role !== Role.Merlin;
@@ -420,7 +422,7 @@ function tickAI(): void {
     }
 }
 
-class AvalonRoom {
+export class AvalonRoom {
     public readonly id = "888";
     public players: Player[] = [];
     public stage = Stage.Preparing;
@@ -531,7 +533,7 @@ class AvalonRoom {
     }
 
     public vote(userId: string, approve: boolean): { finished: boolean; passed: boolean; votes: boolean[] } {
-        if (this.stage !== Stage.Voting || !this.players.some((player) => player.userId === userId)) {
+        if (this.stage !== Stage.Voting || !this.players.some((player) => player.userId === userId) || this.votes.has(userId)) {
             return { finished: false, passed: false, votes: [] };
         }
         this.votes.set(userId, approve);
@@ -555,7 +557,8 @@ class AvalonRoom {
     }
 
     public mission(userId: string, success: boolean): { finished: boolean; success: boolean; failCount: number; round: number } {
-        if (this.stage !== Stage.Mission || !this.selectedSeats.some((seat) => this.players[seat]?.userId === userId)) {
+        if (this.stage !== Stage.Mission || !this.selectedSeats.some((seat) => this.players[seat]?.userId === userId)
+            || this.missionActions.has(userId) || (!success && !this.isBadPlayer(userId))) {
             return { finished: false, success: false, failCount: 0, round: this.round };
         }
         this.missionActions.set(userId, success);

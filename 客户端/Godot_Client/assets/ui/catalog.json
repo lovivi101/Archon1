@@ -1,0 +1,314 @@
+{
+  "game_logo_title": [
+    23,
+    12,
+    1729,
+    862
+  ],
+  "button_primary_blue": [
+    42,
+    131,
+    1995,
+    449
+  ],
+  "button_secondary_dark": [
+    47,
+    157,
+    2078,
+    408
+  ],
+  "button_danger_red": [
+    61,
+    147,
+    1934,
+    414
+  ],
+  "panel_header_empty": [
+    41,
+    63,
+    2090,
+    521
+  ],
+  "panel_content_large": [
+    112,
+    66,
+    863,
+    1294
+  ],
+  "panel_modal_large": [
+    93,
+    87,
+    936,
+    1222
+  ],
+  "panel_list_row": [
+    28,
+    170,
+    2114,
+    344
+  ],
+  "panel_mission_hud": [
+    16,
+    156,
+    2145,
+    369
+  ],
+  "slot_team_member": [
+    15,
+    50,
+    2143,
+    596
+  ],
+  "card_role_back": [
+    99,
+    119,
+    827,
+    1247
+  ],
+  "card_role_front": [
+    138,
+    30,
+    751,
+    1388
+  ],
+  "avatar-merlin": [
+    1,
+    4,
+    1197,
+    1308
+  ],
+  "avatar-player-knight": [
+    12,
+    4,
+    1186,
+    1307
+  ],
+  "avatar-morgana": [
+    0,
+    6,
+    1145,
+    1368
+  ],
+  "avatar-assassin": [
+    7,
+    3,
+    1182,
+    1309
+  ],
+  "avatar-loyal-female": [
+    2,
+    0,
+    1196,
+    1310
+  ],
+  "avatar-dwarf-warrior": [
+    16,
+    59,
+    1127,
+    1313
+  ],
+  "avatar-empty-slot": [
+    24,
+    14,
+    1182,
+    1268
+  ],
+  "role-merlin": [
+    210,
+    4,
+    848,
+    1244
+  ],
+  "role-assassin": [
+    183,
+    24,
+    888,
+    1208
+  ],
+  "role-servant": [
+    63,
+    54,
+    1124,
+    1137
+  ],
+  "banner_good_blue": [
+    35,
+    46,
+    655,
+    2076
+  ],
+  "banner_evil_red": [
+    9,
+    2,
+    706,
+    2121
+  ],
+  "home-icon": [
+    158,
+    127,
+    938,
+    980
+  ],
+  "leaderboard-icon": [
+    156,
+    206,
+    942,
+    861
+  ],
+  "friends-icon": [
+    132,
+    210,
+    1006,
+    850
+  ],
+  "settings-icon": [
+    142,
+    120,
+    969,
+    995
+  ],
+  "sound-icon": [
+    81,
+    279,
+    1092,
+    699
+  ],
+  "check-icon": [
+    106,
+    155,
+    1088,
+    958
+  ],
+  "plus-icon": [
+    158,
+    158,
+    936,
+    926
+  ],
+  "crown-icon": [
+    46,
+    229,
+    1163,
+    792
+  ],
+  "target-icon": [
+    87,
+    45,
+    1080,
+    1121
+  ],
+  "trophy-icon": [
+    172,
+    205,
+    911,
+    860
+  ],
+  "brain-icon": [
+    84,
+    175,
+    1090,
+    956
+  ],
+  "share-icon": [
+    149,
+    145,
+    967,
+    964
+  ],
+  "timer-icon": [
+    305,
+    48,
+    656,
+    1120
+  ],
+  "microphone-icon": [
+    359,
+    87,
+    543,
+    1072
+  ],
+  "thumbs-approve-icon": [
+    185,
+    66,
+    883,
+    1129
+  ],
+  "thumbs-reject-icon": [
+    188,
+    188,
+    871,
+    879
+  ],
+  "mission-success-emblem": [
+    68,
+    33,
+    1118,
+    1168
+  ],
+  "mission-failure-emblem": [
+    86,
+    21,
+    1082,
+    1153
+  ],
+  "invite-swords-icon": [
+    74,
+    78,
+    1106,
+    1092
+  ],
+  "back-icon": [
+    60,
+    245,
+    1141,
+    795
+  ],
+  "bg-main-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-round-table-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-role-reveal-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-voting-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-mission-table-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-assassination-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-records-hall-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ],
+  "bg-friends-library-750x1334": [
+    0,
+    0,
+    750,
+    1334
+  ]
+}
