@@ -4,7 +4,8 @@ import { Pool } from "pg";
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(DatabaseService.name);
-    private readonly pool?: Pool;
+    /** Undefined when no database is configured (development and tests). */
+    public readonly pool?: Pool;
 
     public constructor() {
         if (process.env.NODE_ENV === "production" && !process.env.PGHOST) {

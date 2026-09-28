@@ -35,6 +35,16 @@ export enum Route {
     /** Private to the Excalibur holder: the flipped player's original card. */
     ExcaliburResult = 905,
     ExcaliburUsed = 906,
+    /** My recent games: `{ limit }` -> `{ matches }`. */
+    MatchHistory = 1001,
+    /** Full replay of a game I played: `{ matchId }` -> `{ match }`. */
+    MatchDetail = 1002,
+    /** Top players by rating: `{ limit }` -> `{ top, me }`. */
+    Leaderboard = 1003,
+    /** My rating, tier, games, wins and rank. */
+    MyStats = 1004,
+    /** Pushed after each game: `{ matchId, rating, delta, tier, games, wins }`. */
+    RatingUpdate = 1005,
 }
 
 export enum Role {

@@ -82,6 +82,8 @@ func run() -> void:
 			fail("stalled at stage %d page %d" % [model.stage, controller.page])
 			break
 		await play_step(app, controller, model)
+	if not local and errors.is_empty():
+		await check_records(controller, model, games)
 	print("SELFPLAY players=%s games=%d good_wins=%d my_wins=%d" % [args.players, stats.games, stats.good_wins, stats.my_wins])
 	print("SELFPLAY stats=%s" % JSON.stringify(stats))
 	if not rejections.is_empty():
@@ -216,3 +218,34 @@ func _count(route: int, payload: Dictionary, model: AvalonModel) -> void:
 			stats.excalibur_results += 1
 		T.Route.EVIL_REVEALED:
 			stats.evil_reveals += 1
+
+
+## Online only: leaderboard, match history and a stored replay must reflect the games just played.
+func check_records(controller: AvalonController, model: AvalonModel, games: int) -> void:
+	controller.board_tab = "board"
+	controller.open_leaderboard()
+	if not await wait_for(func(): return not model.leaderboard.is_empty() and model.match_history.size() >= games):
+		fail("leaderboard or history did not arrive (history %d)" % model.match_history.size())
+		return
+	await shot("15-board")
+	if int(model.stats.get("games", 0)) < games:
+		fail("stats count %d games, played %d" % [int(model.stats.get("games", 0)), games])
+	controller.board_tab = "history"
+	controller.open_leaderboard()
+	await shot("15-history")
+	controller.open_match(int(model.match_history[0].matchId))
+	if not await wait_for(func(): return not model.replay.is_empty() and controller.page == 14):
+		fail("stored replay did not open")
+		return
+	if Array(model.replay.get("players", [])).any(func(player): return int(player.role) == 0):
+		fail("stored replay is missing roles")
+	await shot("14-server-replay")
+	print("SELFPLAY records ok: history=%d rating=%s tier=%s" % [model.match_history.size(), model.stats.get("rating"), model.stats.get("tier")])
+
+func wait_for(condition: Callable, seconds := 10.0) -> bool:
+	var start := Time.get_ticks_msec()
+	while Time.get_ticks_msec() - start < seconds * 1000:
+		if condition.call():
+			return true
+		await process_frame
+	return false

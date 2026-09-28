@@ -5,6 +5,7 @@ import {
     ErrorCode, failsNeeded, GameRules, isBadRole, LadyRecord, ladyRounds, MissionRecord, Player, ProposalRecord, Role, roleSetFor, RoomError, Route,
     rulesFor, Stage, teamSizeFor,
 } from "./avalon.types";
+import type { MatchLog } from "./records.service";
 
 export interface RoomConfig {
     minPlayers: number;
@@ -36,6 +37,8 @@ export interface RoomOptions {
     targetPlayers?: number;
     /** Public rooms are found by quick match; private rooms only by code. */
     isPublic?: boolean;
+    /** Called once when a game ends, after GameEnd is broadcast. */
+    onFinish?: (room: AvalonRoom) => void;
 }
 
 export interface GameOutcome {
@@ -98,6 +101,7 @@ export class AvalonRoom {
     public revealedEvil: number[] = [];
 
     private stageStartedAt = 0;
+    private gameStartedAt = 0;
     private speakerMessages = 0;
     private readonly visibility = new Map<number, number[]>();
     /** Private knowledge per seat from the Lady of the Lake and Excalibur. */
@@ -478,6 +482,7 @@ export class AvalonRoom {
         this.ladyHolder = this.rules.lady ? (this.captainIdx - 1 + this.players.length) % this.players.length : -1;
         for (const player of this.players) this.visibility.set(player.seatIndex, this.visibleSeats(player));
 
+        this.gameStartedAt = this.clock();
         this.broadcast(Route.GameStart, { roomId: this.id });
         for (const player of this.players.filter((item) => !item.isAi)) {
             this.options.send(player.userId, Route.IdentityPush, this.identity(player.userId));
@@ -633,6 +638,38 @@ export class AvalonRoom {
         this.deadline = 0;
         this.outcome = { isGoodWin, winReason, allRoles: this.players.map((player) => this.publicPlayer(player, true)) };
         this.broadcast(Route.GameEnd, this.outcome);
+        this.options.onFinish?.(this);
+    }
+
+    /** Everything needed to store and replay the finished game. */
+    public matchLog(): MatchLog {
+        const players = this.players.map((player) => ({
+            userId: player.userId, nickname: player.nickname, avatar: player.avatar, seat: player.seatIndex, role: player.role, isAi: player.isAi,
+        }));
+        return {
+            roomId: this.id,
+            playerCount: this.players.length,
+            goodWin: this.outcome?.isGoodWin ?? false,
+            reason: this.outcome?.winReason ?? "",
+            startedAt: this.gameStartedAt,
+            endedAt: this.clock(),
+            players,
+            record: {
+                roomId: this.id,
+                playerCount: this.players.length,
+                rules: { ...this.rules },
+                isGoodWin: this.outcome?.isGoodWin ?? false,
+                winReason: this.outcome?.winReason ?? "",
+                startedAt: this.gameStartedAt,
+                endedAt: this.clock(),
+                players,
+                proposals: this.proposals.map((item) => ({ ...item })),
+                missions: this.missions.map((item) => ({ ...item })),
+                ladyHistory: this.ladyHistory.map((item) => ({ ...item })),
+                revealedEvil: this.revealedEvil.slice(),
+                chat: this.chatLog.map((entry) => ({ ...entry })),
+            },
+        };
     }
 
     private passCaptain(): void {

@@ -81,7 +81,7 @@ func _page_signature() -> String:
 	var snapshot: Dictionary = AvalonApp.model.snapshot()
 	snapshot.erase("seconds_left")
 	var controller: AvalonController = AvalonApp.controller
-	return JSON.stringify([snapshot, controller.team_choice, controller.last_notice, controller.last_result_route, controller.lobby_count,
+	return JSON.stringify([snapshot, controller.team_choice, controller.last_notice, controller.last_result_route, controller.lobby_count, controller.board_tab,
 		controller.excalibur_choice, controller.avatar_choice, AvalonApp.profile.data.get("muted", false),
 		AvalonApp.profile.data.get("music_on", true), AvalonApp.profile.data.get("sfx_on", true),
 		AvalonApp.profile.data.friends.size(), AvalonApp.profile.data.matches.size()])
@@ -237,7 +237,10 @@ func nav() -> void:
 		b.flat = true
 		b.position = Vector2(x, 1215)
 		b.size = Vector2(125, 55)
-		b.pressed.connect(AvalonApp.controller.show_page.bind(int(item[1])))
+		if int(item[1]) == 15:
+			b.pressed.connect(AvalonApp.controller.open_leaderboard)
+		else:
+			b.pressed.connect(AvalonApp.controller.show_page.bind(int(item[1])))
 		layer.add_child(b)
 
 func player_avatar(seat: int, x: float, y: float, width := 83.0) -> void:
@@ -358,6 +361,72 @@ func room_rules_text() -> String:
 	var roles: Array = model.role_set if not model.role_set.is_empty() else T.roles_for(model.target_players)
 	return "身份：%s\n特殊规则：%s" % [T.role_set_text(roles), T.rules_text(roles.size())]
 
+## A scrolling list of lines; each line is a String or [text, color]. Entries with a Callable third item are buttons.
+func scroll_lines(lines: Array, x: float, y: float, width: float, height: float, size := 18) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(x, y)
+	scroll.size = Vector2(width, height)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var box := VBoxContainer.new()
+	box.custom_minimum_size = Vector2(width - 16, 0)
+	box.add_theme_constant_override("separation", 10)
+	for line in lines:
+		var text: String = line if line is String else str(line[0])
+		var color: Color = line[1] if line is Array and line.size() > 1 else Color(0.95, 0.9, 0.78)
+		var control: Control
+		if line is Array and line.size() > 2:
+			var entry := Button.new()
+			entry.text = text
+			entry.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			entry.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			entry.pressed.connect(line[2])
+			entry.add_theme_color_override("font_color", color)
+			control = entry
+		else:
+			var label := Label.new()
+			label.text = text
+			label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			label.add_theme_color_override("font_color", color)
+			control = label
+		control.custom_minimum_size = Vector2(width - 16, 0)
+		control.add_theme_font_size_override("font_size", size)
+		box.add_child(control)
+	scroll.add_child(box)
+	layer.add_child(scroll)
+
+## Timeline of a stored match (server replay): roles, then every proposal, mission and Lady check.
+func record_lines(record: Dictionary) -> Array:
+	var roster: Array = record.get("players", [])
+	var name_of := func(seat: int) -> String:
+		return "%d号 %s" % [seat + 1, str(roster[seat].get("nickname", "")) if seat >= 0 and seat < roster.size() else ""]
+	var good: Array = []
+	var evil: Array = []
+	for player in roster:
+		var text := "%d号 %s（%s）" % [int(player.seat) + 1, player.nickname, T.role_name(int(player.role))]
+		(evil if T.is_bad_role(int(player.role)) else good).append(text)
+	var lines: Array = [["好人：" + "、".join(PackedStringArray(good)), BLUE], ["坏人：" + "、".join(PackedStringArray(evil)), RED]]
+	var proposals: Array = record.get("proposals", [])
+	var missions: Array = record.get("missions", [])
+	var ladies: Array = record.get("ladyHistory", [])
+	for round_number in range(1, 6):
+		for proposal in proposals.filter(func(item): return int(item.round) == round_number):
+			var votes: Array = proposal.get("votes", [])
+			var team := "、".join(PackedStringArray(Array(proposal.team).map(func(seat): return "%d号" % (int(seat) + 1))))
+			lines.append("第%d轮 %s 提名 %s → %s（赞成 %d/%d）" % [round_number, name_of.call(int(proposal.captainSeat)), team, "通过" if proposal.passed else "否决", votes.count(true), votes.size()])
+		for mission in missions.filter(func(item): return int(item.round) == round_number):
+			var text := "第%d轮任务%s，失败票 %d 张" % [round_number, "成功" if mission.success else "失败", int(mission.failCount)]
+			var sword: Dictionary = mission.get("excalibur", {})
+			if not sword.is_empty():
+				var target := int(sword.targetSeat)
+				text += "；%d号%s" % [int(sword.holderSeat) + 1, "用王者之剑翻转了%d号的牌" % (target + 1) if target >= 0 else "没有使用王者之剑"]
+			lines.append([text, Color(0.6, 0.9, 0.6) if mission.success else RED])
+		for lady in ladies.filter(func(item): return int(item.round) == round_number):
+			var target := int(lady.targetSeat)
+			var truth := "坏人" if target < roster.size() and T.is_bad_role(int(roster[target].role)) else "好人"
+			lines.append(["%s 用湖中仙女查验了 %s（实际是%s）" % [name_of.call(int(lady.holderSeat)), name_of.call(target), truth], BLUE])
+	lines.append([("好人胜利：" if record.get("isGoodWin", false) else "坏人胜利：") + str(record.get("winReason", "")), GOLD])
+	return lines
+
 ## Replay line for one history event.
 func history_text(event: Dictionary) -> String:
 	var data: Dictionary = event.get("data", {})
@@ -388,7 +457,9 @@ func build_page() -> void:
 	match page_id:
 		2:
 			art(model.avatar, 48, 30, 83)
-			text_label(model.nickname, 138, 45, 250, 45, 21, HORIZONTAL_ALIGNMENT_LEFT)
+			text_label(model.nickname, 138, 35, 250, 40, 21, HORIZONTAL_ALIGNMENT_LEFT)
+			if not model.stats.is_empty():
+				text_label("%s · %d 分" % [model.stats.get("tier", ""), int(model.stats.get("rating", 0))], 138, 72, 300, 30, 16, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			art("sound-icon", 570, 42, 41)
 			art("settings-icon", 666, 42, 41)
 			var profile_button := Button.new()
@@ -600,34 +671,67 @@ func build_page() -> void:
 				var me := " （你）" if i == int(fr.get("me", -1)) else (" AI" if player.get("isAi", false) else "")
 				var role := int(player.get("role", 0))
 				text_label("%d. %s    %s%s" % [i + 1, str(player.get("nickname", "玩家")).left(8), T.role_name(role), me], 162, 470 + i * row, 430, row - 4, 20, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else Color(0.95, 0.9, 0.78))
-			button("查看复盘", 60, 1070, 200, func(): controller.show_page(14))
+			if not model.last_rating.is_empty() and model.mode == "network":
+				var delta := int(model.last_rating.get("delta", 0))
+				text_label("段位分 %s%d → %d（%s）" % ["+" if delta >= 0 else "", delta, int(model.last_rating.get("rating", 0)), model.last_rating.get("tier", "")], 90, 1010, 570, 40, 20, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
+			button("查看复盘", 60, 1070, 200, func(): controller.show_final_replay())
 			button("再来一局", 275, 1070, 200, func(): controller.play_again())
 			button("主界面", 490, 1070, 200, func(): controller.leave_room(), "button_secondary_dark")
 		14:
-			header("对局复盘", "本局关键事件")
-			var fr: Dictionary = model.final_result if not model.final_result.is_empty() else model.snapshot()
-			art("panel_content_large", 100, 245, 550)
-			var results: Array = fr.get("results", [])
-			text_label("完成 %d 轮任务：成功 %d 次，失败 %d 次" % [results.size(), results.count(true), results.count(false)], 150, 290, 460, 50, 21)
-			text_label("结论：" + str(fr.get("reason", "")), 150, 340, 460, 60, 19)
-			var events: Array = Array(fr.get("history", [])).filter(func(event): return int(event.get("route", 0)) in [402, 502, 602, 903, 906, 702])
-			var recent: Array = events.slice(maxi(0, events.size() - 11))
-			for i in recent.size():
-				text_label(history_text(recent[i]), 150, 410 + i * 56, 460, 52, 18, HORIZONTAL_ALIGNMENT_LEFT)
-			button("保存分享图", 100, 1080, 270, save_share_card)
-			button("返回结算", 390, 1080, 270, func(): controller.show_page(13), "button_secondary_dark")
-			state_line("复盘根据本局公开事件生成")
+			var from_server := not model.replay.is_empty()
+			header("对局复盘", "第 %d 局完整记录" % int(model.replay.matchId) if from_server else "本局关键事件")
+			art("panel_content_large", 100, 225, 550)
+			if from_server:
+				scroll_lines(record_lines(model.replay), 145, 290, 470, 760)
+				button("返回战绩", 245, 1080, 260, func(): controller.board_tab = "history"; controller.open_leaderboard(), "button_secondary_dark")
+			else:
+				var fr: Dictionary = model.final_result if not model.final_result.is_empty() else model.snapshot()
+				var results: Array = fr.get("results", [])
+				var lines: Array = [["完成 %d 轮任务：成功 %d 次，失败 %d 次" % [results.size(), results.count(true), results.count(false)], GOLD], "结论：" + str(fr.get("reason", ""))]
+				for event in Array(fr.get("history", [])).filter(func(event): return int(event.get("route", 0)) in [402, 502, 602, 903, 906, 702]):
+					lines.append(history_text(event))
+				scroll_lines(lines, 145, 290, 470, 760)
+				button("保存分享图", 100, 1080, 270, save_share_card)
+				button("返回结算", 390, 1080, 270, func(): controller.show_page(13), "button_secondary_dark")
+			state_line("拖动列表查看全部记录")
 		15:
-			header("排行榜", "本机对局记录")
-			art("panel_content_large", 103, 235, 545)
-			var matches: Array = AvalonApp.profile.data.matches
-			for i in mini(9, matches.size()):
-				var match_data: Dictionary = matches[i]
-				var won_match: Variant = match_data.get("won")
-				var outcome := "胜利" if won_match == true else "失败" if won_match == false else ("好人胜" if match_data.get("winner", false) else "坏人胜")
-				text_label("%d. %s  %s  %s" % [i + 1, T.role_name(int(match_data.get("role", 0))), "联机" if match_data.get("mode") == "network" else "练习", outcome], 155, 310 + i * 80, 445, 55, 22, HORIZONTAL_ALIGNMENT_LEFT)
-			if matches.is_empty():
-				text_label("暂无对局记录", 160, 510, 430, 60)
+			header("排行榜", "段位分按 Elo 计算")
+			var tabs := [["全服排行", "board"], ["我的战绩", "history"], ["本机记录", "local"]]
+			for i in tabs.size():
+				var key: String = tabs[i][1]
+				chip(tabs[i][0], 95 + i * 190, 180, 175, 56, func(): controller.board_tab = key; controller.open_leaderboard(), controller.board_tab == key)
+			art("panel_content_large", 103, 250, 545)
+			var tab: String = controller.board_tab
+			if tab != "local" and not controller.is_online():
+				text_label("连接服务器后可查看全服排行和你的战绩", 150, 520, 450, 80, 22)
+				button("连接服务器", 195, 640, 360, func(): controller.connect_for_records())
+			elif tab == "board":
+				var me: Dictionary = model.stats
+				if not me.is_empty():
+					var rank_text := "第 %d 名" % int(me.get("rank", 0)) if int(me.get("rank", 0)) > 0 else "暂无排名"
+					text_label("我：%s · %d 分 · %s · %d 局 %d 胜" % [me.get("tier", ""), int(me.get("rating", 0)), rank_text, int(me.get("games", 0)), int(me.get("wins", 0))], 140, 300, 470, 50, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
+				var rows: Array = model.leaderboard.map(func(row): return ["%d. %s  %s  %d分（%d局%d胜）" % [int(row.rank), str(row.nickname).left(8), row.tier, int(row.rating), int(row.games), int(row.wins)], GOLD if str(row.userId) == model.user_id else Color(0.95, 0.9, 0.78)])
+				if rows.is_empty():
+					rows = ["还没有人完成对局"]
+				scroll_lines(rows, 145, 360, 470, 700)
+			elif tab == "history":
+				var rows: Array = model.match_history.map(func(entry):
+					var delta: Variant = entry.get("ratingDelta")
+					var delta_text := "" if delta == null else ("  %s%d分" % ["+" if int(delta) >= 0 else "", int(delta)])
+					return ["%d人局 · %s · %s%s\n%s" % [int(entry.playerCount), T.role_name(int(entry.role)), "胜利" if entry.won else "失败", delta_text, entry.reason], Color(0.6, 0.9, 0.6) if entry.won else Color(0.95, 0.7, 0.6), controller.open_match.bind(int(entry.matchId))])
+				if rows.is_empty():
+					rows = ["还没有联机对局记录"]
+				scroll_lines(rows, 145, 310, 470, 750, 17)
+			else:
+				var matches: Array = AvalonApp.profile.data.matches
+				var rows: Array = []
+				for match_data in matches:
+					var won_match: Variant = match_data.get("won")
+					var outcome := "胜利" if won_match == true else "失败" if won_match == false else ("好人胜" if match_data.get("winner", false) else "坏人胜")
+					rows.append("%s  %s  %s" % [T.role_name(int(match_data.get("role", 0))), "联机" if match_data.get("mode") == "network" else "练习", outcome])
+				if rows.is_empty():
+					rows = ["暂无对局记录"]
+				scroll_lines(rows, 145, 310, 470, 750)
 			nav()
 		16:
 			header("好友", "本机联系人")

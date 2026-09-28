@@ -59,6 +59,16 @@ var facts: Array = []
 ## started by someone else does not wipe what this player is still looking at.
 var final_result: Dictionary = {}
 
+# Server records (online only)
+## {rating, tier, games, wins, rank}
+var stats: Dictionary = {}
+var leaderboard: Array = []
+var match_history: Array = []
+## Full server replay of a past match, shown on the replay page instead of final_result.
+var replay: Dictionary = {}
+## Rating change pushed after the last game: {matchId, rating, delta, tier, games, wins}.
+var last_rating: Dictionary = {}
+
 const MAX_HISTORY := 60
 const MAX_CHAT := 60
 
@@ -243,6 +253,19 @@ func apply_packet(route: int, data: Dictionary) -> void:
 		905:
 			if not bool(data.get("originalSuccess", true)):
 				_learn(int(data.get("targetSeat", -1)), false)
+		1001:
+			match_history = data.get("matches", []).duplicate(true)
+		1002:
+			replay = data.get("match", {}).duplicate(true)
+		1003:
+			leaderboard = data.get("top", []).duplicate(true)
+			stats = data.get("me", stats).duplicate()
+		1004:
+			stats = data.duplicate()
+			stats.erase("code")
+		1005:
+			last_rating = data.duplicate()
+			stats = {"rating": data.get("rating", 1000), "tier": data.get("tier", ""), "games": data.get("games", 0), "wins": data.get("wins", 0), "rank": stats.get("rank", 0)}
 		906:
 			last_excalibur = data.duplicate(true)
 			var flipped := int(data.get("targetSeat", -1))
@@ -310,4 +333,6 @@ func snapshot() -> Dictionary:
 		"target_players": target_players, "rules": rules.duplicate(), "role_set": role_set.duplicate(),
 		"speaker": speaker_seat, "chat": chat.duplicate(true), "lady_holder": lady_holder, "lady_history": lady_history.duplicate(true),
 		"lady_eligible": lady_eligible.duplicate(), "excalibur": excalibur_seat, "last_excalibur": last_excalibur.duplicate(),
-		"evil": revealed_evil.duplicate(), "facts": facts.duplicate(true), "final": not final_result.is_empty()}
+		"evil": revealed_evil.duplicate(), "facts": facts.duplicate(true), "final": not final_result.is_empty(),
+		"stats": stats.duplicate(), "board": leaderboard.size(), "history_count": match_history.size(), "replay": replay.get("matchId", 0),
+		"rating_update": last_rating.duplicate()}

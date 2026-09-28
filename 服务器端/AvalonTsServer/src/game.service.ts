@@ -3,6 +3,7 @@ import { WebSocket } from "ws";
 import { AvalonRoom, RoomConfig } from "./avalon.room";
 import { ErrorCode, RoomError, Route, Stage } from "./avalon.types";
 import { AuthService } from "./auth.service";
+import { RecordsService, tierFor } from "./records.service";
 import { DatabaseService } from "./database.service";
 import { encodePacket, Packet } from "./protocol";
 
@@ -61,7 +62,7 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     private sequence = 0;
     private timer?: NodeJS.Timeout;
 
-    public constructor(private readonly database: DatabaseService, private readonly auth: AuthService) {}
+    public constructor(private readonly database: DatabaseService, private readonly auth: AuthService, private readonly records: RecordsService) {}
 
     public onModuleInit(): void {
         this.timer = setInterval(() => this.tick(), this.config.tickMs);
@@ -117,6 +118,24 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
                     break;
                 case Route.ExcaliburUse:
                     this.requireRoom(userId).useExcalibur(userId, payload.targetSeat);
+                    break;
+                case Route.MatchHistory:
+                    this.send(client, Route.MatchHistory, { code: 0, matches: await this.stored(() => this.records.history(userId, clampLimit(payload.limit, 20))) });
+                    break;
+                case Route.MatchDetail: {
+                    const match = await this.stored(() => this.records.match(Number(payload.matchId), userId));
+                    if (!match) throw new RoomError(ErrorCode.NotFound, "没有找到这局对局，或你没有参加");
+                    this.send(client, Route.MatchDetail, { code: 0, match });
+                    break;
+                }
+                case Route.Leaderboard:
+                    this.send(client, Route.Leaderboard, {
+                        code: 0, top: await this.stored(() => this.records.leaderboard(clampLimit(payload.limit, 50))),
+                        me: await this.stored(() => this.records.stats(userId)),
+                    });
+                    break;
+                case Route.MyStats:
+                    this.send(client, Route.MyStats, { code: 0, ...(await this.stored(() => this.records.stats(userId))) });
                     break;
                 case Route.Ready:
                     this.handleReady(userId, payload);
@@ -296,10 +315,36 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
             targetPlayers,
             isPublic,
             send: (target, route, payload) => this.deliver(room, target, route, payload),
+            onFinish: (finished) => this.recordMatch(finished),
         });
         this.rooms.set(roomId, room);
         this.logger.log({ event: "room.created", roomId, targetPlayers, isPublic, rooms: this.rooms.size });
         return room;
+    }
+
+    /** Database trouble while reading records becomes a 503 for this request instead of dropping the connection. */
+    private async stored<T>(read: () => Promise<T>): Promise<T> {
+        try {
+            return await read();
+        } catch (error) {
+            this.logger.error({ event: "records.read_failed", error: String(error) });
+            throw new RoomError(ErrorCode.Unavailable, "战绩服务暂不可用");
+        }
+    }
+
+    /** Stores the finished game and tells each human their new rating; a storage failure never breaks the room. */
+    private recordMatch(room: AvalonRoom): void {
+        const log = room.matchLog();
+        this.records.saveMatch(log).then(({ matchId, ratings }) => {
+            this.logger.log({ event: "match.saved", matchId, roomId: room.id });
+            for (const change of ratings) {
+                this.deliver(room, change.userId, Route.RatingUpdate, {
+                    matchId, rating: change.after, delta: change.after - change.before, tier: tierFor(change.after), games: change.games, wins: change.wins,
+                });
+            }
+        }).catch((error: unknown) => {
+            this.logger.error({ event: "match.save_failed", roomId: room.id, error: String(error) });
+        });
     }
 
     private newRoomCode(): string {
@@ -354,4 +399,9 @@ function playerCount(payload: Record<string, any>): number {
     const count = Number(payload.playerCount ?? 5);
     if (!Number.isInteger(count) || count < 5 || count > 10) throw new RoomError(ErrorCode.BadRequest, "人数必须是 5 到 10 人");
     return count;
+}
+
+function clampLimit(value: unknown, fallback: number): number {
+    const limit = Number(value ?? fallback);
+    return Number.isInteger(limit) && limit > 0 ? Math.min(limit, 100) : fallback;
 }

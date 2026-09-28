@@ -306,3 +306,49 @@ test("humans take their speech turn and everyone at the table hears it", async (
     first.close();
     second.close();
 });
+
+test("a finished game is recorded: rating pushed, history, replay for participants, leaderboard", async () => {
+    const player = await new Client().open();
+    const login = await player.login("record-keeper");
+    player.send(105, { playerCount: 5 });
+    await player.wait(102);
+    player.send(103, {});
+    const end = await player.wait(702, () => true, 0, 20000);
+    const rating = await player.wait(1005, () => true, 0, 5000);
+    assert.equal(typeof rating.matchId, "number");
+    assert.equal(rating.games, 1);
+    assert.equal(rating.delta !== 0, true);
+    assert.match(rating.tier, /骑士/);
+
+    let mark = player.packets.length;
+    player.send(1001, {});
+    const history = await player.wait(1001, () => true, mark);
+    assert.equal(history.code, 0);
+    assert.equal(history.matches[0].matchId, rating.matchId);
+    assert.equal(history.matches[0].reason, end.winReason);
+
+    mark = player.packets.length;
+    player.send(1002, { matchId: rating.matchId });
+    const detail = await player.wait(1002, () => true, mark);
+    assert.equal(detail.code, 0);
+    assert.equal(detail.match.players.length, 5);
+    assert.ok(detail.match.players.every((seat) => seat.role > 0), "the replay shows every role");
+    assert.ok(Array.isArray(detail.match.proposals) && detail.match.proposals.length > 0);
+
+    const outsider = await new Client().open();
+    await outsider.login("outsider");
+    outsider.send(1002, { matchId: rating.matchId });
+    assert.equal((await outsider.wait(1002)).code, 404);
+
+    mark = player.packets.length;
+    player.send(1003, {});
+    const board = await player.wait(1003, () => true, mark);
+    assert.ok(board.top.some((row) => row.userId === login.userId));
+    assert.equal(board.me.games, 1);
+    mark = player.packets.length;
+    player.send(1004, {});
+    const stats = await player.wait(1004, () => true, mark);
+    assert.equal(stats.rating, rating.rating);
+    player.close();
+    outsider.close();
+});

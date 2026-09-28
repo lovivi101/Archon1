@@ -31,6 +31,8 @@ var last_notice := ""
 var pending_entry: Dictionary = {}
 ## Table size chosen in the lobby.
 var lobby_count := 5
+## Leaderboard page tab: "board" (全服排行) or "history" (我的战绩).
+var board_tab := "board"
 ## Excalibur recipient picked by the captain (10-player games).
 var excalibur_choice := -1
 ## Second tap on "退出对局" within this tick deadline confirms leaving.
@@ -158,6 +160,11 @@ func join_room_code(url: String, code: String) -> void:
 
 func _enter_room() -> void:
 	match str(pending_entry.get("type", "")):
+		"none":
+			# Connected only to browse records; stay out of rooms until the player picks one.
+			pending_entry = {}
+			auto_join = false
+			return
 		"quick":
 			network.send(T.Route.QUICK_MATCH, {"playerCount": int(pending_entry.count), "nickname": model.nickname, "avatar": model.avatar})
 		"create":
@@ -196,6 +203,30 @@ func exit_game() -> void:
 		return
 	exit_armed_until = 0
 	leave_room()
+
+func is_online() -> bool:
+	return network.state == "open" and model.session in ["logged_in", "in_room"]
+
+## Leaderboard page: fetch from the server when connected.
+func open_leaderboard() -> void:
+	show_page(15)
+	if is_online():
+		network.send(T.Route.LEADERBOARD, {"limit": 50})
+		network.send(T.Route.MATCH_HISTORY, {"limit": 30})
+
+## Connects and logs in without joining a room, to browse records.
+func connect_for_records() -> void:
+	connect_server(model.server_url, {"type": "none"})
+	show_page(15)
+
+## Opens the full replay of a past match on the replay page.
+func open_match(match_id: int) -> void:
+	_send(T.Route.MATCH_DETAIL, {"matchId": match_id})
+
+## Replay of the game that just ended (not a server record).
+func show_final_replay() -> void:
+	model.replay = {}
+	show_page(14)
 
 func toggle_ready() -> bool:
 	if model.mode == "local_demo":
@@ -382,8 +413,12 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 					tokens[model.server_url] = str(payload.token)
 				profile.data.tokens = tokens
 				profile.save()
+				network.send(T.Route.MY_STATS, {})
 				if auto_join:
 					_enter_room()
+				if page == 15:
+					network.send(T.Route.LEADERBOARD, {"limit": 50})
+					network.send(T.Route.MATCH_HISTORY, {"limit": 30})
 		T.Route.JOIN_ROOM:
 			show_page(4)
 		T.Route.GAME_START:
@@ -409,6 +444,11 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 				show_page(page_for_stage(model.stage))
 		T.Route.TEAM_PROPOSED:
 			team_choice = model.selected_seats.duplicate()
+		T.Route.MATCH_DETAIL:
+			show_page(14)
+		T.Route.RATING_UPDATE:
+			var delta := int(payload.get("delta", 0))
+			notice.emit("段位分 %s%d（%s）" % ["+" if delta >= 0 else "", delta, payload.get("tier", "")])
 		T.Route.LADY_RESULT:
 			notice.emit("湖中仙女：%d号是%s" % [int(payload.get("targetSeat", -1)) + 1, "好人" if payload.get("isGood", true) else "坏人"])
 		T.Route.EXCALIBUR_RESULT:
