@@ -3,6 +3,7 @@ extends SceneTree
 ## Every action goes through AvalonController, the same calls the page buttons make.
 ##
 ##   godot --path . --script res://tools/smoke_selfplay.gd -- players=7 games=3 seed=1 shots=/tmp/shots url=ws://127.0.0.1:8899
+## url=local plays offline practice against the client's own AI (local_game.gd) instead of a server.
 ##
 ## Fails if the server rejects a legal move, a page does not follow the stage, a private result is
 ## missing, or a game stalls.
@@ -50,32 +51,22 @@ func run() -> void:
 	var app: Node = root.get_node("AvalonApp")
 	var controller: AvalonController = app.controller
 	var model: AvalonModel = app.model
-	app.network.packet_received.connect(func(route: int, payload: Dictionary):
-		if int(payload.get("code", 0)) != 0:
-			rejections.append("%d: %s (stage %d)" % [route, payload.get("message", ""), model.stage])
-		match route:
-			T.Route.CHAT_MESSAGE:
-				if int(payload.get("seat", -1)) != model.my_seat():
-					stats.ai_lines += 1
-				if str(payload.get("channel", "")) == "evil":
-					stats.evil_chats += 1
-			T.Route.LADY_USED:
-				stats.lady_uses += 1
-			T.Route.LADY_RESULT:
-				stats.lady_results += 1
-			T.Route.EXCALIBUR_USED:
-				if int(payload.get("targetSeat", -1)) >= 0:
-					stats.excalibur_uses += 1
-			T.Route.EXCALIBUR_RESULT:
-				stats.excalibur_results += 1
-			T.Route.EVIL_REVEALED:
-				stats.evil_reveals += 1
-	)
+	app.network.packet_received.connect(func(route: int, payload: Dictionary): _count(route, payload, model))
+	controller.notice.connect(func(message: String):
+		if message.begins_with("当前") or message.begins_with("只有") or message.begins_with("还没") or message.begins_with("你") or message.begins_with("请"):
+			rejections.append("notice: %s (stage %d)" % [message, model.stage]))
+
 
 	controller.lobby_count = int(args.players)
-	controller.show_page(3)
-	await shot("03-lobby")
-	controller.quick_match(args.url, int(args.players))
+	var local: bool = args.url == "local"
+	if local:
+		app.local_game.speed = 12.0
+		app.local_game.packet_received.connect(func(route: int, payload: Dictionary): _count(route, payload, model))
+		controller.create_local_room(int(args.players), int(args.seed))
+	else:
+		controller.show_page(3)
+		await shot("03-lobby")
+		controller.quick_match(args.url, int(args.players))
 	var games := int(args.games)
 	var start := Time.get_ticks_msec()
 	var last_progress := start
@@ -204,3 +195,24 @@ func verify_private_results(model: AvalonModel) -> void:
 			var learned := model.facts.any(func(fact): return int(fact.seat) == int(record.targetSeat))
 			if not learned:
 				fail("Lady check by me on %d号 has no result" % (int(record.targetSeat) + 1))
+
+func _count(route: int, payload: Dictionary, model: AvalonModel) -> void:
+	if int(payload.get("code", 0)) != 0:
+		rejections.append("%d: %s (stage %d)" % [route, payload.get("message", ""), model.stage])
+	match route:
+		T.Route.CHAT_MESSAGE:
+			if int(payload.get("seat", -1)) != model.my_seat():
+				stats.ai_lines += 1
+			if str(payload.get("channel", "")) == "evil":
+				stats.evil_chats += 1
+		T.Route.LADY_USED:
+			stats.lady_uses += 1
+		T.Route.LADY_RESULT:
+			stats.lady_results += 1
+		T.Route.EXCALIBUR_USED:
+			if int(payload.get("targetSeat", -1)) >= 0:
+				stats.excalibur_uses += 1
+		T.Route.EXCALIBUR_RESULT:
+			stats.excalibur_results += 1
+		T.Route.EVIL_REVEALED:
+			stats.evil_reveals += 1

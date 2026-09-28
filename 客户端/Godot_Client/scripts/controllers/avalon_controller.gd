@@ -216,20 +216,22 @@ func end_speech() -> bool:
 func lady_check(seat: int) -> bool:
 	if model.stage != T.Stage.LADY_OF_LAKE or model.lady_holder != model.my_seat() or model.acted:
 		return false
+	model.acted = true
 	var sent := _send(T.Route.LADY_CHECK, {"targetSeat": seat})
-	if sent:
-		model.acted = true
-		model.changed.emit()
+	if not sent:
+		model.acted = false
+	model.changed.emit()
 	return sent
 
 ## seat -1 keeps the cards as played.
 func use_excalibur(seat: int) -> bool:
 	if model.stage != T.Stage.EXCALIBUR or model.excalibur_seat != model.my_seat() or model.acted:
 		return false
+	model.acted = true
 	var sent := _send(T.Route.EXCALIBUR_USE, {"targetSeat": seat})
-	if sent:
-		model.acted = true
-		model.changed.emit()
+	if not sent:
+		model.acted = false
+	model.changed.emit()
 	return sent
 
 func choose_excalibur(seat: int) -> void:
@@ -283,10 +285,13 @@ func submit_team() -> bool:
 func vote(approve: bool) -> bool:
 	if model.stage != T.Stage.VOTING or model.voted:
 		return false
+	# Mark before sending: a local game answers synchronously and may already have moved on
+	# (resetting the flag for the next stage) by the time _send returns.
+	model.voted = true
 	var sent := _send(T.Route.VOTE_TEAM, {"userId":model.user_id,"approve":approve})
-	if sent:
-		model.voted = true
-		model.changed.emit()
+	if not sent:
+		model.voted = false
+	model.changed.emit()
 	return sent
 
 func mission(success: bool) -> bool:
@@ -295,10 +300,11 @@ func mission(success: bool) -> bool:
 	if not success and not T.is_bad_role(model.my_role):
 		notice.emit("好人只能提交任务成功")
 		return false
+	model.acted = true
 	var sent := _send(T.Route.MISSION_ACTION, {"userId":model.user_id,"success":success})
-	if sent:
-		model.acted = true
-		model.changed.emit()
+	if not sent:
+		model.acted = false
+	model.changed.emit()
 	return sent
 
 func assassinate(seat: int) -> bool:
@@ -310,7 +316,8 @@ func _send(route: int, payload: Dictionary) -> bool:
 	if model.mode == "local_demo":
 		var accepted: bool = local_game.command(route, payload, model.my_seat())
 		if not accepted:
-			notice.emit("当前阶段无法执行此操作")
+			game_event.emit("ui_error")
+			notice.emit(local_game.last_error if not local_game.last_error.is_empty() else "当前阶段无法执行此操作")
 		return accepted
 	if network.state != "open":
 		notice.emit("服务器未连接")

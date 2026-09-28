@@ -77,3 +77,7 @@ static func rules_text(player_count: int) -> String:
 	if player_count >= 7:
 		parts.append("第4轮需2张失败票")
 	return "、".join(parts) if not parts.is_empty() else "无"
+
+## Optional modules per table size, matching the server: Lady of the Lake at 7, Excalibur at 10.
+static func rules_for(player_count: int) -> Dictionary:
+	return {"lady": player_count == 7, "excalibur": player_count == 10}

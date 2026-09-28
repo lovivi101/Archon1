@@ -32,7 +32,7 @@ func run() -> void:
 		scene.queue_free()
 		await process_frame
 	print("ALL_17_PAGES_RENDERED")
-	for i in 160:
+	for i in 2000:
 		if not root.get_node("AvalonApp").local_game.running:
 			break
 		root.get_node("AvalonApp").local_game.bot_tick(true)

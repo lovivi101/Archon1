@@ -402,10 +402,14 @@ func build_page() -> void:
 			chip("静音" if muted else "声音", 552, 92, 76, 34, func(): controller.set_muted(not muted), muted)
 			chip("设置", 648, 92, 76, 34, func(): controller.show_page(18))
 			art("game_logo_title", 145, 268, 460)
-			button("联机对战", 145, 880, 460, func(): controller.show_page(3))
-			button("本地练习（5人）", 190, 990, 370, func(): controller.create_local_room(), "button_secondary_dark")
+			button("联机对战", 145, 820, 460, func(): controller.show_page(3))
+			text_label("本地练习人数", 90, 925, 570, 36, 19, HORIZONTAL_ALIGNMENT_LEFT)
+			for i in 6:
+				var count := 5 + i
+				chip("%d人" % count, 90 + i * 96, 965, 86, 50, func(): controller.lobby_count = count; _refresh(), controller.lobby_count == count)
+			button("本地练习（%d人）" % controller.lobby_count, 190, 1030, 370, func(): controller.create_local_room(controller.lobby_count), "button_secondary_dark")
 			nav()
-			state_line("联机：快速匹配、创建房间或输入房间号；本地练习可离线运行")
+			state_line("本地练习可离线与 AI 对战，规则与联机相同")
 		3:
 			header("联机大厅", "选择人数后匹配或创建房间")
 			dark_panel(60, 180, 630, 1030)
@@ -479,7 +483,7 @@ func build_page() -> void:
 				if model.stage == T.Stage.PROPOSING:
 					button("进入组队", 165, 1080, 420, func(): controller.show_page(8))
 				else:
-					text_label("本地练习没有发言环节" if model.mode == "local_demo" else "等待进入发言阶段", 125, 1080, 500, 60, 22)
+					text_label("等待进入发言阶段", 125, 1080, 500, 60, 22)
 		8:
 			header("队长组队")
 			progress()
