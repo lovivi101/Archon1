@@ -23,9 +23,10 @@ AvalonApp="*res://scripts/app_root.gd"
 
 window/size/viewport_width=750
 window/size/viewport_height=1334
-window/size/resizable=false
-window/size/window_width_override=750
-window/size/window_height_override=1334
+window/size/window_width_override=600
+window/size/window_height_override=1067
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
 
 [rendering]
 

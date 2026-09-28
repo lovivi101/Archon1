@@ -62,7 +62,7 @@ func start() -> void:
 	for i in players.size():
 		players[i].role = roles[i]
 		players[i].isReady = true
-	captain = 0
+	captain = rng.randi_range(0, players.size() - 1)
 	running = true
 	packet_received.emit(301, {"roomId":room_id})
 	stage = 1

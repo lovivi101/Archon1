@@ -7,6 +7,9 @@ var peer := WebSocketPeer.new()
 var url := ""
 var state := "offline"
 var elapsed := 0.0
+## Close code of the last closed connection (4001 = the account logged in elsewhere).
+var close_code := -1
+const CLOSE_LOGGED_IN_ELSEWHERE := 4001
 
 func _process(delta: float) -> void:
 	if state in ["offline", "closed", "error"]:
@@ -21,7 +24,8 @@ func _process(delta: float) -> void:
 			if not decoded.is_empty():
 				packet_received.emit(int(decoded.route),decoded.payload)
 	elif peer.get_ready_state() == WebSocketPeer.STATE_CLOSED:
-		_set_state("closed", "连接已断开")
+		close_code = peer.get_close_code()
+		_set_state("closed", "账号已在其他地方登录" if close_code == CLOSE_LOGGED_IN_ELSEWHERE else "连接已断开")
 	elif elapsed > 8.0 and state == "connecting":
 		peer.close()
 		_set_state("error", "连接超时，请检查服务器地址")
@@ -35,6 +39,7 @@ func connect_to_url(target_url: String) -> void:
 	peer = WebSocketPeer.new()
 	peer.heartbeat_interval = 10.0
 	elapsed = 0.0
+	close_code = -1
 	var error := peer.connect_to_url(url)
 	if error != OK:
 		_set_state("error", "无法创建连接：%s" % error)

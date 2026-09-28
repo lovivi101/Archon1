@@ -18,6 +18,11 @@ var last_result_route := 0
 var reconnect_elapsed := 0.0
 var reconnect_attempts := 0
 var manual_close := false
+var login_with_token := false
+## Join the room after (re)login; off once the player leaves, so a later reconnect does not pull them back in.
+var auto_join := false
+## Last notice shown to the player; pages redraw it after rebuilding.
+var last_notice := ""
 
 func setup(next_model: AvalonModel, next_network: AvalonNetwork, demo: Node, store: RefCounted) -> void:
 	model = next_model
@@ -27,6 +32,7 @@ func setup(next_model: AvalonModel, next_network: AvalonNetwork, demo: Node, sto
 	network.packet_received.connect(_on_packet)
 	network.state_changed.connect(_on_network_state)
 	local_game.packet_received.connect(_on_packet)
+	notice.connect(func(message: String): last_notice = message)
 	model.changed.connect(func(): changed.emit())
 	model.user_id = str(profile.data.id)
 	model.nickname = str(profile.data.nickname)
@@ -46,6 +52,8 @@ func _process(delta: float) -> void:
 			network.connect_to_url(model.server_url)
 
 func show_page(next_page: int) -> void:
+	if clampi(next_page, 1, 16) != page:
+		last_notice = ""
 	page = clampi(next_page, 1, 16)
 	if page in [14,15,16]:
 		resume_page = 13 if model.stage == T.Stage.END else (4 if model.stage == T.Stage.PREPARING else maxi(7, page_for_stage(model.stage)))
@@ -60,9 +68,9 @@ func login(provider: String) -> void:
 		show_page(2)
 		return
 	if provider == "wechat":
-		notice.emit("桌面版无微信授权；请在主界面选择连接服务器或本地练习")
 		model.mode = "network"
 		show_page(2)
+		notice.emit("桌面版无微信授权；请在主界面选择连接服务器或本地练习")
 
 func create_local_room(count := 5, seed_value := -1) -> void:
 	manual_close = true
@@ -84,6 +92,7 @@ func connect_server(url: String) -> void:
 	profile.data.url = normalized
 	profile.save()
 	manual_close = false
+	auto_join = true
 	reconnect_attempts = 0
 	network.connect_to_url(normalized)
 	show_page(3)
@@ -91,11 +100,20 @@ func connect_server(url: String) -> void:
 func leave_room() -> void:
 	if model.mode == "local_demo":
 		local_game.running = false
-	else:
-		manual_close = true
-		network.close()
+	elif network.state == "open":
+		# Tell the server so the seat is freed (or handed to autopilot mid-game); stay connected and logged in.
+		network.send(T.Route.LEAVE_ROOM, {})
+		model.session = "logged_in"
+	auto_join = false
 	model.reset()
 	show_page(2)
+
+## "Play again" from the results page: online, a Ready resets the finished room on the server.
+func play_again() -> void:
+	if model.mode == "network" and network.state == "open" and model.session == "in_room":
+		_send(T.Route.READY, {})
+	else:
+		create_local_room()
 
 func ready() -> bool:
 	if model.mode == "local_demo":
@@ -164,19 +182,55 @@ func _on_network_state(state: String, message: String) -> void:
 	model.connection = state
 	notice.emit(message)
 	model.changed.emit()
+	if state == "closed" and network.close_code == network.CLOSE_LOGGED_IN_ELSEWHERE:
+		manual_close = true # Reconnecting would just kick the other session back.
 	if state == "open" and model.mode == "network":
-		network.send(T.Route.LOGIN, {"userId":model.user_id,"nickname":model.nickname})
+		_send_login()
+
+## Resumes the saved account for this server when a token exists, otherwise logs in as a new guest.
+func _send_login() -> void:
+	var tokens: Dictionary = profile.data.get("tokens", {})
+	var token := str(tokens.get(model.server_url, ""))
+	login_with_token = not token.is_empty()
+	var payload := {"nickname":model.nickname}
+	if login_with_token:
+		payload["token"] = token
+	network.send(T.Route.LOGIN, payload)
+
+func _on_error(route: int, payload: Dictionary) -> void:
+	match route:
+		T.Route.LOGIN:
+			if login_with_token and int(payload.get("code", 0)) == 401:
+				# Expired or foreign token: forget it and start over as a guest.
+				var tokens: Dictionary = profile.data.get("tokens", {})
+				tokens.erase(model.server_url)
+				profile.data.tokens = tokens
+				profile.save()
+				_send_login()
+				return
+		T.Route.VOTE_TEAM:
+			model.voted = false
+		T.Route.MISSION_ACTION:
+			model.acted = false
+	notice.emit(str(payload.get("message", "服务器拒绝请求")))
+	model.changed.emit()
 
 func _on_packet(route: int, payload: Dictionary) -> void:
-	if model.mode == "network" and int(payload.get("code",0)) != 0:
-		notice.emit(str(payload.get("message","服务器拒绝请求")))
+	if int(payload.get("code",0)) != 0:
+		_on_error(route, payload)
 		return
 	model.apply_packet(route,payload)
 	match route:
 		T.Route.LOGIN:
 			reconnect_attempts = 0
 			if model.mode == "network":
-				network.send(T.Route.JOIN_ROOM, {"roomId":model.room_id,"userId":model.user_id,"nickname":model.nickname})
+				var tokens: Dictionary = profile.data.get("tokens", {})
+				if payload.has("token"):
+					tokens[model.server_url] = str(payload.token)
+				profile.data.tokens = tokens
+				profile.save()
+				if auto_join:
+					network.send(T.Route.JOIN_ROOM, {"roomId":model.room_id,"userId":model.user_id,"nickname":model.nickname})
 		T.Route.JOIN_ROOM:
 			show_page(4)
 		T.Route.GAME_START:
@@ -206,7 +260,8 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 		T.Route.GAME_END:
 			auto_demo = false
 			profile.record(model.snapshot())
-			show_page(13)
+			if page != 11:
+				show_page(13) # From the last result page, "Continue" leads here instead.
 
 func page_for_stage(stage: int) -> int:
 	match stage:
