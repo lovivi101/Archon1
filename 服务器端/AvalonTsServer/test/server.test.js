@@ -91,6 +91,7 @@ test.before(async () => {
             ...process.env, PORT: String(port), PGHOST: "", NODE_ENV: "test",
             AVALON_NIGHT_SECONDS: "0.1", AVALON_PROPOSE_SECONDS: "0.3", AVALON_VOTE_SECONDS: "0.3",
             AVALON_MISSION_SECONDS: "0.3", AVALON_ASSASSIN_SECONDS: "0.3", AVALON_AI_TICK_MS: "20", AVALON_AI_DELAY_MS: "20",
+            AVALON_SPEAK_SECONDS: "0.3", AVALON_LADY_SECONDS: "0.3", AVALON_EXCALIBUR_SECONDS: "0.3", AVALON_AI_SPEECH_MS: "20",
         },
         stdio: "ignore",
         windowsHide: true,
@@ -235,4 +236,73 @@ test("login attempts are rate limited per connection", async () => {
     client.send(101, {});
     await client.wait(101, (payload) => payload.code === 429);
     client.close();
+});
+
+test("private rooms get a 6-digit code; quick match groups players by table size", async () => {
+    const host = await new Client().open();
+    const friend = await new Client().open();
+    const stranger = await new Client().open();
+    await host.login("host");
+    await friend.login("friend");
+    await stranger.login("stranger");
+
+    host.send(105, { playerCount: 11 });
+    assert.equal((await host.wait(105)).code, 400);
+    host.send(105, { playerCount: 7 });
+    const created = await host.wait(102);
+    assert.equal(created.code, 0);
+    assert.match(created.room.roomId, /^\d{6}$/);
+    assert.equal(created.room.targetPlayers, 7);
+    assert.deepEqual(created.room.rules, { lady: true, excalibur: false });
+
+    let mark = friend.packets.length;
+    friend.send(102, { roomId: "000000", mustExist: true });
+    assert.equal((await friend.wait(102, () => true, mark)).code, 404);
+    mark = friend.packets.length;
+    friend.send(102, { roomId: created.room.roomId, mustExist: true });
+    const joined = await friend.wait(102, () => true, mark);
+    assert.equal(joined.code, 0);
+    assert.equal(joined.room.players.length, 2);
+
+    // Quick match for 10 players: both land in the same public room, separate from the private one.
+    mark = friend.packets.length;
+    friend.send(106, { playerCount: 10 });
+    const first = await friend.wait(102, () => true, mark);
+    stranger.send(106, { playerCount: 10 });
+    const second = await stranger.wait(102);
+    assert.equal(first.room.roomId, second.room.roomId);
+    assert.notEqual(first.room.roomId, created.room.roomId);
+    assert.equal(second.room.isPublic, true);
+    assert.deepEqual(second.room.rules, { lady: false, excalibur: true });
+    for (const client of [host, friend, stranger]) client.close();
+});
+
+test("humans take their speech turn and everyone at the table hears it", async () => {
+    const first = await new Client().open();
+    const second = await new Client().open();
+    const one = await first.login("talker-1");
+    const two = await second.login("talker-2");
+    first.send(105, { playerCount: 5 });
+    const { room } = await first.wait(102);
+    second.send(102, { roomId: room.roomId, mustExist: true });
+    await second.wait(102);
+
+    const mark = first.packets.length;
+    first.send(801, { text: "还没开始" });
+    assert.equal((await first.wait(801, () => true, mark)).code, 409);
+    first.send(103, {});
+    second.send(103, {});
+    // Whoever is first to get the floor says one line; the other player must receive it.
+    const seats = { [one.userId]: first, [two.userId]: second };
+    const players = (await first.wait(301)) && (await first.wait(201, (payload) => payload.room.stage === 1)).room.players;
+    const seatOwner = new Map(players.map((player) => [player.seatIndex, seats[player.userId]]));
+    const turn = await first.wait(804, (payload) => seatOwner.get(payload.speakerSeat) !== undefined, 0, 20000);
+    const speaker = seatOwner.get(turn.speakerSeat);
+    const listener = speaker === first ? second : first;
+    speaker.send(801, { text: "我是好人，这轮我先听听" });
+    const heard = await listener.wait(802, (payload) => payload.text === "我是好人，这轮我先听听");
+    assert.equal(heard.seat, turn.speakerSeat);
+    assert.equal(heard.channel, "all");
+    first.close();
+    second.close();
 });

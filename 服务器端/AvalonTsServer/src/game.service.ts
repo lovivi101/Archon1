@@ -33,6 +33,10 @@ export function loadRoomConfig(): RoomConfig & { tickMs: number; maxRooms: numbe
         minPlayers: 5,
         maxPlayers: 10,
         nightMs: envNumber("AVALON_NIGHT_SECONDS", 2) * 1000,
+        speakMs: envNumber("AVALON_SPEAK_SECONDS", 30, 0.1) * 1000,
+        ladyMs: envNumber("AVALON_LADY_SECONDS", 30, 0.1) * 1000,
+        excaliburMs: envNumber("AVALON_EXCALIBUR_SECONDS", 20, 0.1) * 1000,
+        aiSpeechMs: envNumber("AVALON_AI_SPEECH_MS", 1500),
         proposeMs: envNumber("AVALON_PROPOSE_SECONDS", 60, 0.1) * 1000,
         voteMs: envNumber("AVALON_VOTE_SECONDS", 30, 0.1) * 1000,
         missionMs: envNumber("AVALON_MISSION_SECONDS", 30, 0.1) * 1000,
@@ -96,6 +100,24 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
                 case Route.JoinRoom:
                     this.handleJoinRoom(client, userId, payload);
                     break;
+                case Route.CreateRoom:
+                    this.handleCreateRoom(client, userId, payload);
+                    break;
+                case Route.QuickMatch:
+                    this.handleQuickMatch(client, userId, payload);
+                    break;
+                case Route.Chat:
+                    this.requireRoom(userId).chat(userId, payload.text);
+                    break;
+                case Route.EndSpeech:
+                    this.requireRoom(userId).endSpeech(userId);
+                    break;
+                case Route.LadyCheck:
+                    this.requireRoom(userId).ladyCheck(userId, payload.targetSeat);
+                    break;
+                case Route.ExcaliburUse:
+                    this.requireRoom(userId).useExcalibur(userId, payload.targetSeat);
+                    break;
                 case Route.Ready:
                     this.handleReady(userId, payload);
                     break;
@@ -103,7 +125,7 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
                     this.handleLeave(client, userId);
                     break;
                 case Route.ProposeTeam:
-                    this.requireRoom(userId).propose(userId, payload.selectedSeats);
+                    this.requireRoom(userId).propose(userId, payload.selectedSeats, payload.excaliburSeat);
                     break;
                 case Route.VoteTeam:
                     this.requireRoom(userId).vote(userId, payload.approve);
@@ -186,23 +208,44 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         this.send(client, Route.Login, { code: 0, userId, nickname, provider, token, expiresAt });
     }
 
+    /** Joins a room by id. A missing room is created (legacy clients) unless `mustExist` is set, as when typing a room code. */
     private handleJoinRoom(client: ClientConnection, userId: string, payload: Record<string, any>): void {
         const roomId = String(payload.roomId ?? DEFAULT_ROOM_ID).trim();
         if (!roomIdPattern.test(roomId)) throw new RoomError(ErrorCode.BadRequest, "房间号只能包含字母、数字、下划线和短横线");
-        const nickname = (String(payload.nickname ?? client.nickname ?? "").trim() || `Player_${userId}`).slice(0, 64);
-
-        const current = this.roomOf(userId);
-        if (current && current.id !== roomId) {
-            if (current.isInGame()) throw new RoomError(ErrorCode.Conflict, `你正在房间 ${current.id} 的对局中，请先返回或离开该房间`);
-            this.leaveRoom(current, userId);
-        }
-
+        this.leaveOtherRoom(userId, roomId);
         let room = this.rooms.get(roomId);
         if (!room) {
-            if (this.rooms.size >= this.config.maxRooms) throw new RoomError(ErrorCode.Unavailable, "房间数量已达上限，请稍后再试");
-            room = this.createRoom(roomId);
+            if (payload.mustExist === true) throw new RoomError(ErrorCode.NotFound, "房间不存在，请检查房间号");
+            room = this.createRoom(roomId, payload.playerCount === undefined ? 5 : playerCount(payload), false);
         }
-        this.userRooms.set(userId, roomId);
+        this.enterRoom(client, userId, room, payload);
+    }
+
+    /** A private room with a fresh 6-digit code; friends join it with JoinRoom + mustExist. */
+    private handleCreateRoom(client: ClientConnection, userId: string, payload: Record<string, any>): void {
+        const count = playerCount(payload);
+        this.leaveOtherRoom(userId, null);
+        this.enterRoom(client, userId, this.createRoom(this.newRoomCode(), count, false), payload);
+    }
+
+    /** Seats the player in an open public room for that player count, or opens a new one. */
+    private handleQuickMatch(client: ClientConnection, userId: string, payload: Record<string, any>): void {
+        const count = playerCount(payload);
+        this.leaveOtherRoom(userId, null);
+        const open = [...this.rooms.values()].find((room) => room.isPublic && room.targetPlayers === count && room.hasFreeSeat());
+        this.enterRoom(client, userId, open ?? this.createRoom(this.newRoomCode(), count, true), payload);
+    }
+
+    private leaveOtherRoom(userId: string, keepRoomId: string | null): void {
+        const current = this.roomOf(userId);
+        if (!current || current.id === keepRoomId) return;
+        if (current.isInGame()) throw new RoomError(ErrorCode.Conflict, `你正在房间 ${current.id} 的对局中，请先返回或离开该房间`);
+        this.leaveRoom(current, userId);
+    }
+
+    private enterRoom(client: ClientConnection, userId: string, room: AvalonRoom, payload: Record<string, any>): void {
+        const nickname = (String(payload.nickname ?? client.nickname ?? "").trim() || `Player_${userId}`).slice(0, 64);
+        this.userRooms.set(userId, room.id);
         try {
             room.join(userId, nickname);
         } catch (error) {
@@ -218,8 +261,10 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
             return;
         }
         if (room.isInGame()) {
+            // Rejoining mid-game: identity (with private Lady/Excalibur knowledge), the stage and the table talk so far.
             this.send(client, Route.IdentityPush, room.identity(userId));
             this.send(client, Route.StageChange, room.stagePayload());
+            for (const entry of room.chatFor(userId)) this.send(client, Route.ChatMessage, { ...entry, history: true });
         }
         room.broadcastRoom(Route.PlayerJoin);
     }
@@ -242,14 +287,24 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         this.collect(room);
     }
 
-    private createRoom(roomId: string): AvalonRoom {
+    private createRoom(roomId: string, targetPlayers: number, isPublic: boolean): AvalonRoom {
+        if (this.rooms.size >= this.config.maxRooms) throw new RoomError(ErrorCode.Unavailable, "房间数量已达上限，请稍后再试");
         const room: AvalonRoom = new AvalonRoom(roomId, {
             config: this.config,
+            targetPlayers,
+            isPublic,
             send: (target, route, payload) => this.deliver(room, target, route, payload),
         });
         this.rooms.set(roomId, room);
-        this.logger.log({ event: "room.created", roomId, rooms: this.rooms.size });
+        this.logger.log({ event: "room.created", roomId, targetPlayers, isPublic, rooms: this.rooms.size });
         return room;
+    }
+
+    private newRoomCode(): string {
+        for (;;) {
+            const code = String(100000 + Math.floor(Math.random() * 900000));
+            if (!this.rooms.has(code)) return code;
+        }
     }
 
     /** Rooms outside a game with nobody online are closed right away; games in progress wait for `tick` to time them out. */
@@ -293,3 +348,8 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     }
 }
 
+function playerCount(payload: Record<string, any>): number {
+    const count = Number(payload.playerCount ?? 5);
+    if (!Number.isInteger(count) || count < 5 || count > 10) throw new RoomError(ErrorCode.BadRequest, "人数必须是 5 到 10 人");
+    return count;
+}

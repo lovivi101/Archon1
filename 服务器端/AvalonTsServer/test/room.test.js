@@ -15,13 +15,15 @@ function seeded(seed) {
 }
 
 const baseConfig = {
-    minPlayers: 5, maxPlayers: 10, nightMs: 1000, proposeMs: 60000, voteMs: 30000, missionMs: 30000, assassinMs: 60000, aiDelayMs: 100,
+    minPlayers: 5, maxPlayers: 10, nightMs: 1000, speakMs: 30000, proposeMs: 60000, voteMs: 30000, missionMs: 30000,
+    ladyMs: 30000, excaliburMs: 20000, assassinMs: 60000, aiDelayMs: 100, aiSpeechMs: 300,
 };
 
-function setup({ humans = 1, seed = 1, config = {} } = {}) {
+function setup({ humans = 1, seed = 1, config = {}, players } = {}) {
     const ctx = { now: 1000, sent: [] };
     ctx.room = new AvalonRoom("t", {
         config: { ...baseConfig, ...config },
+        targetPlayers: players ?? Math.max(5, humans),
         send: (to, route, payload) => ctx.sent.push({ to, route, payload }),
         clock: () => ctx.now,
         random: seeded(seed),
@@ -30,6 +32,16 @@ function setup({ humans = 1, seed = 1, config = {} } = {}) {
     ctx.advance = (ms) => {
         ctx.now += ms;
         ctx.room.tick();
+    };
+    /** Ends every remaining speech turn (anyone may be told to end on their behalf in tests). */
+    ctx.skipSpeeches = () => {
+        while (ctx.room.stage === Stage.Speaking) ctx.room.endSpeech(ctx.room.players[ctx.room.currentSpeaker()].userId);
+    };
+    /** From the start of the game to the first Proposing stage. */
+    ctx.toProposing = () => {
+        if (ctx.room.stage === Stage.Night) ctx.advance(baseConfig.nightMs);
+        ctx.skipSpeeches();
+        assert.equal(ctx.room.stage, Stage.Proposing);
     };
     ctx.startAll = () => {
         for (let index = 0; index < humans; index += 1) ctx.room.ready(`h${index}`, true);
@@ -50,7 +62,7 @@ function seatOf(room, role) {
     return room.players.find((player) => player.role === role);
 }
 
-test("start fills AI seats up to five and night advances to proposing", () => {
+test("start fills AI seats up to the room size and night leads to speeches, captain first", () => {
     const ctx = setup();
     ctx.startAll();
     assert.equal(ctx.room.players.length, 5);
@@ -62,6 +74,9 @@ test("start fills AI seats up to five and night advances to proposing", () => {
     ctx.advance(999);
     assert.equal(ctx.room.stage, Stage.Night);
     ctx.advance(1);
+    assert.equal(ctx.room.stage, Stage.Speaking);
+    assert.equal(ctx.room.currentSpeaker(), ctx.room.captainIdx);
+    ctx.skipSpeeches();
     assert.equal(ctx.room.stage, Stage.Proposing);
 });
 
@@ -103,7 +118,7 @@ test("invalid actions are rejected with error codes instead of being ignored", (
     ctx.startAll();
     const { room } = ctx;
     expectError(() => room.vote("h0", true), 409);
-    ctx.advance(1000);
+    ctx.toProposing();
     const captain = room.players[room.captainIdx];
     const other = room.players.find((player) => player !== captain);
     expectError(() => room.propose(other.userId, [0, 1]), 403);
@@ -122,7 +137,7 @@ test("good players cannot fail a mission and cards cannot be resubmitted", () =>
     const ctx = setup({ humans: 5, seed: 11 });
     ctx.startAll();
     const { room } = ctx;
-    ctx.advance(1000);
+    ctx.toProposing();
     const good = room.players.find((player) => !isBadRole(player.role));
     const bad = room.players.find((player) => isBadRole(player.role));
     room.propose(room.players[room.captainIdx].userId, [good.seatIndex, bad.seatIndex]);
@@ -175,8 +190,8 @@ test("five rejected proposals end the game for evil", () => {
     const ctx = setup({ humans: 5, seed: 17 });
     ctx.startAll();
     const { room } = ctx;
-    ctx.advance(1000);
     for (let attempt = 0; attempt < 5; attempt += 1) {
+        ctx.toProposing();
         const size = room.teamSize();
         room.propose(room.players[room.captainIdx].userId, [...Array(size).keys()]);
         for (const player of room.players) room.vote(player.userId, false);
@@ -188,17 +203,19 @@ test("five rejected proposals end the game for evil", () => {
 test("stage change carries captain, round and vote progress", () => {
     const ctx = setup({ humans: 5, seed: 19 });
     ctx.startAll();
-    ctx.advance(1000);
+    ctx.toProposing();
     const { room } = ctx;
     const firstCaptain = room.captainIdx;
     room.propose(room.players[firstCaptain].userId, [0, 1]);
     for (const player of room.players) room.vote(player.userId, false);
+    // A rejected team passes the captain and goes back to speeches, new captain first.
     const change = ctx.sent.filter((item) => item.route === Route.StageChange).at(-1).payload;
-    assert.equal(change.stage, Stage.Proposing);
+    assert.equal(change.stage, Stage.Speaking);
     assert.equal(change.captainIdx, (firstCaptain + 1) % 5);
+    assert.equal(change.speakerSeat, (firstCaptain + 1) % 5);
     assert.equal(change.failedVotes, 1);
     assert.equal(change.round, 1);
-    assert.equal(change.timeout, 60);
+    assert.equal(change.timeout, 30);
     assert.ok(change.deadline > ctx.now);
 });
 

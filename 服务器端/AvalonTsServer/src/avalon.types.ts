@@ -3,6 +3,10 @@ export enum Route {
     JoinRoom = 102,
     Ready = 103,
     LeaveRoom = 104,
+    /** Create a private room with a 6-digit code; success is answered on JoinRoom. */
+    CreateRoom = 105,
+    /** Join (or open) a public room for the requested player count; success is answered on JoinRoom. */
+    QuickMatch = 106,
     RoomInfoInit = 201,
     PlayerJoin = 202,
     PlayerReady = 203,
@@ -17,6 +21,20 @@ export enum Route {
     MissionResult = 602,
     Assassinate = 701,
     GameEnd = 702,
+    /** Evil players reveal themselves when the assassination starts. */
+    EvilRevealed = 703,
+    Chat = 801,
+    ChatMessage = 802,
+    EndSpeech = 803,
+    SpeakerChange = 804,
+    LadyCheck = 901,
+    /** Private to the Lady holder: the checked player's loyalty. */
+    LadyResult = 902,
+    LadyUsed = 903,
+    ExcaliburUse = 904,
+    /** Private to the Excalibur holder: the flipped player's original card. */
+    ExcaliburResult = 905,
+    ExcaliburUsed = 906,
 }
 
 export enum Role {
@@ -39,6 +57,12 @@ export enum Stage {
     Mission = 4,
     Assassinating = 5,
     End = 6,
+    /** Captain first, then clockwise; one speaker at a time. */
+    Speaking = 7,
+    /** Lady of the Lake holder checks a player (after missions 2-4). */
+    LadyOfLake = 8,
+    /** Excalibur holder may flip one team member's mission card. */
+    Excalibur = 9,
 }
 
 /** Error codes sent back on the request route as `{ code, message, seq }`. */
@@ -81,7 +105,29 @@ export interface MissionRecord {
     team: number[];
     failCount: number;
     success: boolean;
+    /** Excalibur use on this mission, if any (target -1 = not used). */
+    excalibur?: { holderSeat: number; targetSeat: number };
 }
+
+/** Public record of one Lady of the Lake check; only the holder learns the result. */
+export interface LadyRecord {
+    round: number;
+    holderSeat: number;
+    targetSeat: number;
+}
+
+/** Optional modules. Per the design doc: Lady of the Lake at 7 players, Excalibur at 10. */
+export interface GameRules {
+    lady: boolean;
+    excalibur: boolean;
+}
+
+export function rulesFor(playerCount: number): GameRules {
+    return { lady: playerCount === 7, excalibur: playerCount === 10 };
+}
+
+/** Rounds after which the Lady of the Lake is used. */
+export const ladyRounds = new Set([2, 3, 4]);
 
 export class RoomError extends Error {
     public constructor(public readonly code: ErrorCode, message: string) {
