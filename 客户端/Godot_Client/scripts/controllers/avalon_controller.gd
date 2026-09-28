@@ -4,10 +4,14 @@ const T = preload("res://scripts/mvc/avalon_types.gd")
 signal changed
 signal notice(message: String)
 signal page_changed(page: int)
+## Named sound cue for the audio service (see assets/audio/README.md).
+signal game_event(name: String)
 var model: AvalonModel
 var network: AvalonNetwork
 var local_game: Node
 var profile: RefCounted
+## Set by the app root; toggles the audio buses from the settings page.
+var audio: Node
 var page := 1
 var resume_page := 2
 var auto_demo := false
@@ -347,6 +351,7 @@ func _on_error(route: int, payload: Dictionary) -> void:
 			model.voted = false
 		T.Route.MISSION_ACTION:
 			model.acted = false
+	game_event.emit("ui_error")
 	notice.emit(str(payload.get("message", "服务器拒绝请求")))
 	model.changed.emit()
 
@@ -354,7 +359,13 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 	if int(payload.get("code",0)) != 0:
 		_on_error(route, payload)
 		return
+	var turn_before := model.pending_action()
+	var players_before := model.players.size()
 	model.apply_packet(route,payload)
+	_play_cue(route, payload, players_before)
+	var turn_after := model.pending_action()
+	if not turn_after.is_empty() and turn_after != turn_before:
+		game_event.emit("your_turn")
 	match route:
 		T.Route.LOGIN:
 			reconnect_attempts = 0
@@ -406,6 +417,39 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 			profile.record(model.snapshot())
 			if page != 11:
 				show_page(13) # From the last result page, "Continue" leads here instead.
+
+## Sound cue for a server (or local game) event.
+func _play_cue(route: int, payload: Dictionary, players_before: int) -> void:
+	match route:
+		T.Route.JOIN_ROOM: game_event.emit("room_enter")
+		T.Route.PLAYER_JOIN:
+			if model.players.size() > players_before:
+				game_event.emit("player_join")
+		T.Route.PLAYER_READY: game_event.emit("player_ready")
+		T.Route.GAME_START: game_event.emit("game_start")
+		T.Route.IDENTITY_PUSH: game_event.emit("role_reveal")
+		T.Route.CHAT_MESSAGE:
+			if int(payload.get("seat", -1)) != model.my_seat() and not payload.get("history", false):
+				game_event.emit("speech_message")
+		T.Route.TEAM_PROPOSED: game_event.emit("team_proposed")
+		T.Route.VOTE_RESULT: game_event.emit("vote_pass" if payload.get("isPassed", false) else "vote_reject")
+		T.Route.MISSION_RESULT: game_event.emit("mission_success" if payload.get("isSuccess", false) else "mission_fail")
+		T.Route.EVIL_REVEALED: game_event.emit("evil_revealed")
+		T.Route.LADY_USED: game_event.emit("lady_check")
+		T.Route.LADY_RESULT: game_event.emit("lady_result")
+		T.Route.EXCALIBUR_USED:
+			if int(payload.get("targetSeat", -1)) >= 0:
+				game_event.emit("excalibur_flip")
+		T.Route.GAME_END:
+			if str(payload.get("winReason", "")).begins_with("刺客"):
+				game_event.emit("assassination")
+
+func set_audio_bus(bus_name: String, enabled: bool) -> void:
+	if audio:
+		audio.set_enabled(bus_name, enabled)
+	profile.data["music_on" if bus_name == AvalonAudio.MUSIC_BUS else "sfx_on"] = enabled
+	profile.save()
+	model.changed.emit()
 
 func page_for_stage(stage: int) -> int:
 	match stage:

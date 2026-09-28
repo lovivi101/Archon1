@@ -54,6 +54,8 @@ func show_message(title: String, text: String) -> void:
 	dialog.popup_centered(Vector2i(620, 420))
 
 func _request_login(provider: String) -> void:
+	if has_node("/root/AvalonApp"):
+		AvalonApp.audio.play_sfx("ui_click")
 	if not agreement.button_pressed:
 		show_message("提示", "请先阅读并勾选《用户协议》和《隐私政策》")
 		return

@@ -83,6 +83,7 @@ func _page_signature() -> String:
 	var controller: AvalonController = AvalonApp.controller
 	return JSON.stringify([snapshot, controller.team_choice, controller.last_notice, controller.last_result_route, controller.lobby_count,
 		controller.excalibur_choice, controller.avatar_choice, AvalonApp.profile.data.get("muted", false),
+		AvalonApp.profile.data.get("music_on", true), AvalonApp.profile.data.get("sfx_on", true),
 		AvalonApp.profile.data.friends.size(), AvalonApp.profile.data.matches.size()])
 
 func _process(_delta: float) -> void:
@@ -147,6 +148,7 @@ func button(value: String, x: float, y: float, width: float, action: Callable, k
 	control.add_theme_font_size_override("font_size", 25)
 	control.add_theme_color_override("font_color", Color(0.97, 0.9, 0.75))
 	control.add_theme_color_override("font_hover_color", Color.WHITE)
+	control.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 	control.pressed.connect(action)
 	layer.add_child(control)
 	return control
@@ -161,6 +163,7 @@ func chip(value: String, x: float, y: float, width: float, height: float, action
 	control.size = Vector2(width, height)
 	control.add_theme_font_size_override("font_size", 22)
 	control.add_theme_color_override("font_color", GOLD if selected else Color(0.95, 0.9, 0.78))
+	control.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 	control.pressed.connect(action)
 	layer.add_child(control)
 	return control
@@ -674,8 +677,12 @@ func build_page() -> void:
 				pick.pressed.connect(func(): controller.avatar_choice = key; _refresh())
 				layer.add_child(pick)
 			var muted: bool = AvalonApp.profile.data.get("muted", false)
-			text_label("声音", 90, 790, 200, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			chip("已静音" if muted else "开启", 300, 785, 160, 58, func(): controller.set_muted(not muted), muted)
+			var music_on: bool = AvalonApp.profile.data.get("music_on", true)
+			var sfx_on: bool = AvalonApp.profile.data.get("sfx_on", true)
+			text_label("声音", 90, 790, 120, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
+			chip("全部静音" if muted else "声音开启", 200, 785, 150, 58, func(): controller.set_muted(not muted), muted)
+			chip("音乐 开" if music_on else "音乐 关", 365, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.MUSIC_BUS, not music_on), not music_on)
+			chip("音效 开" if sfx_on else "音效 关", 520, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.SFX_BUS, not sfx_on), not sfx_on)
 			button("保存", 195, 900, 360, func(): if controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
 			button("返回", 220, 1110, 310, func(): controller.show_page(2), "button_secondary_dark")
 			state_line("修改会在下次进入房间时生效")
