@@ -1,3 +1,4 @@
 .godot/
 *.png.import
 *.svg.import
+build/

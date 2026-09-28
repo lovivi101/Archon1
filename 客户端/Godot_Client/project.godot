@@ -13,7 +13,7 @@ config_version=5
 config/name="阿瓦隆：暗影对决"
 run/main_scene="res://scenes/login.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://assets/login/settings.png"
+config/icon="res://assets/app/icon.png"
 
 [autoload]
 
@@ -27,9 +27,11 @@ window/size/window_width_override=600
 window/size/window_height_override=1067
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
+window/handheld/orientation=1
 
 [rendering]
 
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
 environment/defaults/default_clear_color=Color(0.015, 0.019, 0.025, 1)

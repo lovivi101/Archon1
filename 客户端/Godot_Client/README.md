@@ -43,3 +43,33 @@ Linux 下用 `Godot_v4.7.2-stable_linux.x86_64` 执行相同参数；没有显�
 新增或更换 `assets/` 下的图片后，需要先用编辑器打开项目或执行上面的 `--import` 命令完成导入（`*.import` 文件不入库），否则运行时会报 “No loader found”。
 
 `tools/build_pages.py`（需要 Python 与 Pillow，在仓库根目录运行）可重新复制 UI 素材并生成页面基础场景；不要把完整参考图写入场景。由于运行页用脚本绘制，页面布局修改在 `page_view.gd` 中进行。
+
+## 导出 Android App
+
+`export_presets.cfg` 已包含 “Android” 预设：包名 `com.archon1.avalon`，arm64-v8a，最低 Android 7.0，锁定竖屏，申请网络权限，使用 `assets/app/` 下的应用图标和自适应图标。`tools/`、`verification/` 和 `.cmd` 不会打进安装包。
+
+一次性准备（Godot 编辑器 → 编辑器设置 → 导出 → Android）：
+
+1. 安装 Godot 4.7.2 导出模板（编辑器菜单“编辑器 → 管理导出模板”）。
+2. `Android SDK Path` 指向 Android SDK（Android Studio 自带，或命令行工具安装的 SDK），需要其中的 `build-tools` 和 `platform-tools`。
+3. `Java SDK Path` 指向 JDK 17 或更高版本。调试证书由 Godot 自动生成。
+
+导出调试包（可直接安装到手机测试）：
+
+```powershell
+& 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --export-debug "Android" build/android/Avalon-debug.apk
+```
+
+也可以在编辑器“项目 → 导出 → Android → 导出项目”里操作。产物在 `build/`（不入库）。Linux/macOS 命令行导出时请使用 UTF-8 语言环境（如 `LC_ALL=C.UTF-8`），否则签名工具无法处理路径中的中文目录名。
+
+发布包需要你自己的签名证书，证书一旦用于上架就要长期保管，**不要提交到仓库**：
+
+```powershell
+keytool -genkeypair -v -keystore avalon-release.keystore -alias avalon -keyalg RSA -keysize 2048 -validity 10000
+$env:GODOT_ANDROID_KEYSTORE_RELEASE_PATH = 'D:\keys\avalon-release.keystore'
+$env:GODOT_ANDROID_KEYSTORE_RELEASE_USER = 'avalon'
+$env:GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD = '<证书密码>'
+& 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --export-release "Android" build/android/Avalon.apk
+```
+
+手机联机时，服务器地址不能用 `127.0.0.1`（那是手机自己），要在“连接服务器”页填写运行服务端那台电脑的局域网地址，例如 `ws://192.168.1.10:8888`，并在电脑防火墙放行该端口。正式上线应使用 `wss://` 地址。
