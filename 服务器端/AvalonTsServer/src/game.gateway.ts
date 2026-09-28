@@ -2,7 +2,8 @@ import { Logger } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import { ConnectedSocket, MessageBody, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, WebSocketGateway } from "@nestjs/websockets";
 import { WebSocket, RawData } from "ws";
-import { AvalonGameService, ClientConnection, decodePacket } from "./game.service";
+import { AvalonGameService, ClientConnection } from "./game.service";
+import { decodePacket } from "./protocol";
 
 @WebSocketGateway()
 export class AvalonGateway implements OnGatewayConnection, OnGatewayDisconnect {

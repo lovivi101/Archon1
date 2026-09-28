@@ -41,7 +41,7 @@ async function waitForHealth(port) {
         try {
             const result = await fetch(`http://127.0.0.1:${port}/health`);
             const data = await result.json();
-            if (result.ok && data.ok && data.room.stage === 0) return;
+            if (result.ok && data.ok && data.rooms === 0) return;
         } catch (_) {
             // The isolated server may still be starting.
         }
