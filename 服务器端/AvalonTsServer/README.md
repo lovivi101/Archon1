@@ -1,6 +1,6 @@
 # Avalon NestJS 服务端
 
-服务端现已迁移到 NestJS 11：使用 `@nestjs/platform-express` 提供 HTTP 接口、`@nestjs/platform-ws` 提供 WebSocket 网关。Cocos 客户端当前协议保持不变：
+服务端现已迁移到 NestJS 11：使用 `@nestjs/platform-express` 提供 HTTP 接口、`@nestjs/platform-ws` 提供 WebSocket 网关。客户端（`客户端/Godot_Client`）使用的协议：
 
 ```text
 2 字节 little-endian seq
@@ -9,7 +9,7 @@ JSON body
 ```
 
 默认监听 `0.0.0.0:8888`，所以客户端可以继续使用 `ws://127.0.0.1:8888`。健康检查地址为 `http://127.0.0.1:8888/health`。
-如果 `8888` 已被旧服务占用，可在 PowerShell 中先运行 `$env:PORT = '8889'`，再运行 `npm start`，并在 Cocos 的服务器地址框填写 `ws://127.0.0.1:8889`。
+如果 `8888` 已被旧服务占用，可在 PowerShell 中先运行 `$env:PORT = '8889'`，再运行 `npm start`，并在 Godot 客户端的服务器地址框填写 `ws://127.0.0.1:8889`。
 
 ## 启动
 
@@ -47,7 +47,7 @@ npm run dev
 | `token` | `token` | 恢复之前的账号。令牌由服务端用 HMAC-SHA256 签名，有效期 `AVALON_TOKEN_TTL_DAYS` 天；被篡改、过期或由其他密钥签发的令牌返回 401 |
 | `wxCode`（或 `code`） | `wechat` | 微信小游戏 `wx.login()` 拿到的 code，服务端调用 `jscode2session` 换取 openid。userId 为 `wx_` 加 openid 的哈希，其他玩家从房间快照里看不到 openid；`session_key` 不保存。未配置 `WECHAT_APPID`/`WECHAT_SECRET` 时返回 503 |
 | 什么都不带，或 `guest: true` | `guest` | 新建一个随机游客账号（`g_` 开头，不可猜测） |
-| `userId` | `legacy` | 旧版“客户端自报 ID”，现有 Cocos/Godot Demo 使用这种方式。**生产环境默认关闭**（返回 401），开发环境默认开启，可用 `AVALON_ALLOW_LEGACY_LOGIN` 覆盖；不能使用 `wx_`、`g_`、`ai-` 前缀 |
+| `userId` | `legacy` | 旧版“客户端自报 ID”，当前 Godot 客户端尚未接入令牌时使用这种方式。**生产环境默认关闭**（返回 401），开发环境默认开启，可用 `AVALON_ALLOW_LEGACY_LOGIN` 覆盖；不能使用 `wx_`、`g_`、`ai-` 前缀 |
 
 - 同一账号在新连接登录时，旧连接会以关闭码 4001 断开。
 - 每个连接 60 秒内最多尝试登录 10 次，超出返回 429。
@@ -86,7 +86,7 @@ npm run dev
 | `WECHAT_APPID` / `WECHAT_SECRET` | 空 | 小游戏的 AppID 和 AppSecret，都填写后才启用微信登录 |
 | `WECHAT_API_BASE` | `https://api.weixin.qq.com` | 微信接口地址，测试时可指向模拟服务 |
 
-Go Due 服务端仍保留在 `服务器端/Due_Server`，作为后续 Redis、etcd、gRPC 集群化实现。这个 TypeScript 服务不复用 Due 的注册中心，因此本地联调不需要预先启动 Redis 和 etcd。
+原 Cocos 客户端和 Go Due 服务端已停止维护，移到仓库根目录的 `归档/` 中保留参考。
 
 ## 代码结构
 
@@ -122,17 +122,16 @@ docker compose down
 
 服务端在 Compose 中输出单行 JSON 日志到标准输出；HTTP 响应带 `X-Request-Id`（成功的健康检查不写访问日志），WebSocket 连接有 `connectionId`，路由日志包含 `seq`、`route` 和耗时。日志不记录包体、昵称或密码。Docker 的 `json-file` 日志每个服务最多保留 5 个 10 MB 文件，过期日志会轮转删除；长期留存需要接入集中日志系统。数据库没有对宿主机开放端口。
 
-Compose 以 `NODE_ENV=production` 运行，因此 `.env` 必须设置 `AVALON_TOKEN_SECRET`，并且默认关闭旧版 `userId` 登录。现有 Cocos/Godot Demo 仍使用旧版登录，接入令牌前如需在自己的服务器上联调，可临时设置 `AVALON_ALLOW_LEGACY_LOGIN=1`，**不要在公网服务器上开启**。房间、身份、对局进度依旧在进程内存中，重启会丢失，当前只能运行单个服务实例；要上线多人/多副本，还需实现房间持久化或共享状态、备份、TLS/WSS、反向代理。请不要用 `docker compose down -v`，那会删除数据库卷。
+Compose 以 `NODE_ENV=production` 运行，因此 `.env` 必须设置 `AVALON_TOKEN_SECRET`，并且默认关闭旧版 `userId` 登录。Godot 客户端接入令牌登录之前如需在自己的服务器上联调，可临时设置 `AVALON_ALLOW_LEGACY_LOGIN=1`，**不要在公网服务器上开启**。房间、身份、对局进度依旧在进程内存中，重启会丢失，当前只能运行单个服务实例；要上线多人/多副本，还需实现房间持久化或共享状态、备份、TLS/WSS、反向代理。请不要用 `docker compose down -v`，那会删除数据库卷。
 
 ## 测试
 
 ```powershell
 npm test          # 编译后运行 test/ 下的规则单元测试和 WebSocket 端到端测试
-npm run test:smoke
 ```
 
 `npm test` 不依赖数据库，会在随机端口启动独立服务，覆盖登录与令牌（含模拟微信接口）、夜晚视野、各类非法操作的错误码、超时托管、结束后重开、离开与重连、多房间隔离等场景。
 
-`test:smoke` 先运行 `npm test`，再直接加载 Cocos 项目中的 `AvalonNetwork`，在独立临时端口启动全新 NestJS 应用，依次验证登录、加入房间、准备、游戏开始、身份下发和阶段切换。成功时会输出 `PASS` 以及实际收到的路由序列；可反复运行，不会占用开发服务的 8888 房间。
+客户端协议的联调验证见 `客户端/Godot_Client/tools/smoke_network.gd`。
 
-在 Creator Preview 的连接框填写 `ws://127.0.0.1:8888`。手机或微信开发者工具连接到另一台电脑时，改用服务电脑的局域网地址；真机发布需要可访问的 `wss://` 地址及对应平台域名配置。
+在 Godot 客户端的服务器地址框填写 `ws://127.0.0.1:8888`。手机或微信开发者工具连接到另一台电脑时，改用服务电脑的局域网地址；真机发布需要可访问的 `wss://` 地址及对应平台域名配置。

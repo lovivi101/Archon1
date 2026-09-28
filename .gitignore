@@ -2,14 +2,14 @@
 Configure_environment/
 
 # Cocos Creator generated output and editor caches.
-客户端/Cocos_Client/library/
-客户端/Cocos_Client/temp/
-客户端/Cocos_Client/local/
-客户端/Cocos_Client/build/
-客户端/Cocos_Client/profiles/
-客户端/Cocos_Client/native/
-客户端/Cocos_Client/.vscode/
-客户端/Cocos_Client/.idea/
+归档/Cocos_Client/library/
+归档/Cocos_Client/temp/
+归档/Cocos_Client/local/
+归档/Cocos_Client/build/
+归档/Cocos_Client/profiles/
+归档/Cocos_Client/native/
+归档/Cocos_Client/.vscode/
+归档/Cocos_Client/.idea/
 
 # Dependencies and generated JavaScript output.
 **/node_modules/
@@ -26,6 +26,6 @@ Configure_environment/
 !**/.env.example
 
 # Legacy Due runtime binaries/logs; keep source/configuration instead.
-服务器端/Due_Server/*.exe
-服务器端/Due_Server/*.log
-服务器端/Due_Server/*_err.log
+归档/Due_Server/*.exe
+归档/Due_Server/*.log
+归档/Due_Server/*_err.log
