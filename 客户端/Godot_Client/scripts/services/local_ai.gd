@@ -7,6 +7,7 @@ class_name LocalAi
 ## {seat, role, visible, count, round, failed_votes, proposals, missions, facts}
 ## proposals: [{round, captainSeat, team, votes, passed}], missions: [{round, team, failCount, success}],
 ## facts: [{seat, isGood}] learned from the Lady of the Lake or Excalibur.
+## Optional: excalibur_seat (current holder), hidden (evil seats Merlin could not see, during the assassination).
 
 const T = preload("res://scripts/mvc/avalon_types.gd")
 
@@ -75,6 +76,128 @@ static func suspicion(view: Dictionary, merlin_weight := 0.0) -> Array:
 			score[int(fact.seat)] += 100.0
 	return score
 
+## How likely an evil team member plays a failure card; used to weigh possible worlds.
+const FAIL_RATE := 0.7
+
+static func _binomial(n: int, k: int) -> float:
+	var result := 1.0
+	for i in range(1, k + 1):
+		result = result * float(n - k + i) / float(i)
+	return result
+
+## Every k-seat subset of `pool`.
+static func _combinations(pool: Array, k: int) -> Array:
+	var result: Array = []
+	_walk(pool, k, 0, [], result)
+	return result
+
+static func _walk(pool: Array, k: int, start: int, picked: Array, result: Array) -> void:
+	if picked.size() == k:
+		result.append(picked.duplicate())
+		return
+	for index in range(start, pool.size() - (k - picked.size()) + 1):
+		picked.append(pool[index])
+		_walk(pool, k, index + 1, picked, result)
+		picked.pop_back()
+
+## Possible-worlds reasoning for a good seat (see goodBeliefs in avalon.ai.ts):
+## {"evil": P(seat is evil) per seat, "worlds": [{"evil": {seat: true}, "weight": float}]}.
+static func good_beliefs(view: Dictionary, use_night := true) -> Dictionary:
+	var count: int = view.count
+	var evil_count: int = T.roles_for(count).filter(func(role): return T.is_bad_role(role)).size()
+	var must_evil := {}
+	var must_good := {int(view.seat): true}
+	for fact in view.facts:
+		if fact.isGood:
+			must_good[int(fact.seat)] = true
+		else:
+			must_evil[int(fact.seat)] = true
+	if use_night and view.role == T.Role.MERLIN:
+		for seat in view.visible:
+			must_evil[int(seat)] = true
+	var pool: Array = _range(count).filter(func(seat): return not must_evil.has(seat) and not must_good.has(seat))
+	var need: int = evil_count - must_evil.size()
+	var worlds: Array = []
+	if need >= 0 and need <= pool.size():
+		for pick in _combinations(pool, need):
+			var evil := must_evil.duplicate()
+			for seat in pick:
+				evil[seat] = true
+			# Percival sees Merlin and Morgana: exactly one of the two is evil.
+			if use_night and view.role == T.Role.PERCIVAL and view.visible.size() == 2 and view.visible.filter(func(seat): return evil.has(int(seat))).size() != 1:
+				continue
+			var weight := 1.0
+			for mission in view.missions:
+				if mission.has("excalibur") and int(mission.excalibur.targetSeat) >= 0:
+					continue # A flipped card hides who played what.
+				var on_team: int = mission.team.filter(func(seat): return evil.has(int(seat))).size()
+				var fails := int(mission.failCount)
+				if fails > on_team:
+					weight = 0.0
+					break
+				weight *= _binomial(on_team, fails) * pow(FAIL_RATE, fails) * pow(1.0 - FAIL_RATE, on_team - fails)
+			if weight == 0.0:
+				continue
+			# Evil players tend to approve teams carrying evil and reject clean ones; tempered, since humans vary.
+			for proposal in view.proposals:
+				var dirty: bool = proposal.team.any(func(seat): return evil.has(int(seat)))
+				for seat in evil:
+					var approve: bool = proposal.votes[seat]
+					var chance := (0.85 if approve else 0.15) if dirty else (0.4 if approve else 0.6)
+					weight *= sqrt(chance)
+			worlds.append({"evil": evil, "weight": weight})
+	var total := 0.0
+	for world in worlds:
+		total += world.weight
+	var odds: Array = []
+	odds.resize(count)
+	odds.fill(0.0)
+	if total <= 0.0:
+		for seat in count:
+			odds[seat] = 0.0 if must_good.has(seat) else (1.0 if must_evil.has(seat) else float(evil_count) / maxf(1.0, count - 1))
+		return {"evil": odds, "worlds": []}
+	for world in worlds:
+		world.weight /= total
+		for seat in world.evil:
+			odds[seat] += world.weight
+	return {"evil": odds, "worlds": worlds}
+
+## Probability that none of `team` is evil.
+static func clean_chance(beliefs: Dictionary, team: Array) -> float:
+	if beliefs.worlds.is_empty():
+		var chance := 1.0
+		for seat in team:
+			chance *= 1.0 - beliefs.evil[int(seat)]
+		return chance
+	var sum := 0.0
+	for world in beliefs.worlds:
+		if not team.any(func(seat): return world.evil.has(int(seat))):
+			sum += world.weight
+	return sum
+
+## Approve a team about as likely to be clean as the best team this seat could build.
+static func _belief_vote(view: Dictionary, team: Array, beliefs: Dictionary) -> bool:
+	var on_team: bool = int(view.seat) in team
+	var members: Array = team.filter(func(seat): return int(seat) != int(view.seat))
+	if members.is_empty():
+		return true
+	var others: Array = _range(view.count).filter(func(seat): return seat != int(view.seat))
+	others.sort_custom(func(a, b): return beliefs.evil[a] < beliefs.evil[b])
+	var best := clean_chance(beliefs, others.slice(0, members.size() if on_team else members.size() - 1))
+	return clean_chance(beliefs, members) >= best * 0.8 - 0.02
+
+## The vote an ordinary good player in this seat would cast (evil players use it to blend in).
+static func _good_looking_vote(view: Dictionary, team: Array, rng: RandomNumberGenerator) -> bool:
+	if view.failed_votes >= 4:
+		return true
+	if view.missions.is_empty() and view.proposals.is_empty():
+		return int(view.seat) in team or rng.randf() < 0.7
+	var pretend := view.duplicate()
+	pretend.role = T.Role.SERVANT
+	pretend.visible = []
+	pretend.facts = []
+	return _belief_vote(pretend, team, good_beliefs(pretend))
+
 static func by_score(seats: Array, score: Array, rng: RandomNumberGenerator, noise := 0.5) -> Array:
 	var keyed: Array = seats.map(func(seat): return [score[int(seat)] + rng.randf() * noise, int(seat)])
 	keyed.sort_custom(func(a, b): return a[0] < b[0])
@@ -96,10 +219,17 @@ static func propose_team(view: Dictionary, size: int, rng: RandomNumberGenerator
 			if team.size() >= size:
 				break
 			team.append(seat)
+	elif view.role == T.Role.MERLIN:
+		# Merlin plays like an ordinary good player plus a nudge away from known evil.
+		var odds: Array = good_beliefs(view, false).evil
+		for seat in view.visible:
+			odds[int(seat)] += 0.35
+		for seat in by_score(others, odds, rng, 0.3):
+			if team.size() >= size:
+				break
+			team.append(seat)
 	else:
-		# Merlin steers away from evil, but with enough noise that the pattern is not a giveaway.
-		var noise := 1.5 if view.role == T.Role.MERLIN else 0.5
-		for seat in by_score(others, suspicion(view, 1.2), rng, noise):
+		for seat in by_score(others, good_beliefs(view).evil, rng, 0.05):
 			if team.size() >= size:
 				break
 			team.append(seat)
@@ -112,11 +242,16 @@ static func vote(view: Dictionary, team: Array, rng: RandomNumberGenerator) -> b
 	var evil := known_evil(view)
 	var has_evil: bool = team.any(func(seat): return evil.has(int(seat)))
 	if T.is_bad_role(view.role):
-		if has_evil:
+		var evil_wins: int = view.missions.filter(func(mission): return not mission.success).size()
+		# Decisive moments: push a team carrying evil through, or reject the fifth clean team to win.
+		if has_evil and evil_wins >= 2:
 			return true
-		if view.failed_votes >= 4:
+		if not has_evil and view.failed_votes >= 4:
 			return false
-		return rng.randf() < 0.3
+		# Otherwise vote like a good player about half the time, so the record does not give evil away.
+		if rng.randf() < 0.5:
+			return _good_looking_vote(view, team, rng)
+		return has_evil or rng.randf() < 0.3
 	# Rejecting the fifth proposal hands evil the game.
 	if view.failed_votes >= 4:
 		return true
@@ -125,17 +260,9 @@ static func vote(view: Dictionary, team: Array, rng: RandomNumberGenerator) -> b
 		return rng.randf() < 0.3
 	if has_evil:
 		return false
-	if view.missions.is_empty():
+	if view.missions.is_empty() and view.proposals.is_empty():
 		return on_team or rng.randf() < 0.7
-	var score := suspicion(view)
-	var others: Array = _range(view.count).filter(func(seat): return seat != view.seat).map(func(seat): return score[seat])
-	others.sort()
-	var members: Array = team.filter(func(seat): return int(seat) != int(view.seat))
-	if members.is_empty():
-		return true
-	var cut: float = others[members.size() - 1] + 0.25
-	var worst: float = members.map(func(seat): return score[int(seat)]).max()
-	return worst <= cut
+	return _belief_vote(view, team, good_beliefs(view, view.role != T.Role.MERLIN))
 
 ## True for a success card. Good players always succeed.
 static func mission_card(view: Dictionary, team: Array, rng: RandomNumberGenerator) -> bool:
@@ -143,10 +270,13 @@ static func mission_card(view: Dictionary, team: Array, rng: RandomNumberGenerat
 		return true
 	if view.role == T.Role.OBERON:
 		return rng.randf() < 0.2
-	var need := 2 if T.needs_two_fails(view.count, view.round) else 1
 	var evil := known_evil(view)
 	var evil_on_team: Array = team.filter(func(seat): return evil.has(int(seat)))
 	evil_on_team.sort()
+	# Excalibur in non-evil hands can flip one failure back: spend a spare evil card to cover it.
+	var holder := int(view.get("excalibur_seat", -1))
+	var flip_risk := 1 if holder >= 0 and not evil.has(holder) else 0
+	var need := mini(evil_on_team.size(), (2 if T.needs_two_fails(view.count, view.round) else 1) + flip_risk)
 	# Coordinate so exactly the needed number of known evil players fail.
 	if evil_on_team.size() < need or evil_on_team.find(int(view.seat)) >= need:
 		return true
@@ -164,14 +294,19 @@ static func assassin_target(view: Dictionary, rng: RandomNumberGenerator) -> int
 	var score := {}
 	for seat in candidates:
 		score[seat] = rng.randf() * 0.5
+	# Judge teams as Merlin saw them: Mordred looked clean to Merlin.
+	var blind: Array = view.get("hidden", [])
 	for proposal in view.proposals:
-		var dirty: bool = proposal.team.any(func(seat): return evil.has(int(seat)))
+		var dirty: bool = proposal.team.any(func(seat): return evil.has(int(seat)) and not int(seat) in blind)
+		# Early calls say the most: before failed missions, only Merlin can reliably tell a dirty team.
+		var failed_before: int = view.missions.filter(func(mission): return int(mission.round) < int(proposal.round) and not mission.success).size()
+		var weight := 1.0 / (1.0 + failed_before)
 		for seat in candidates:
 			var approve: bool = proposal.votes[seat]
-			var delta := (-0.5 if approve else 1.0) if dirty else (0.25 if approve else 0.0)
+			var delta := (-0.5 if approve else 1.0) if dirty else (0.25 if approve else -0.25)
 			if int(proposal.captainSeat) == seat:
-				delta += -0.5 if dirty else 0.5
-			score[seat] += delta
+				delta += -0.75 if dirty else 0.75
+			score[seat] += delta * weight
 	var best: int = candidates[0]
 	for seat in candidates:
 		if score[seat] > score[best]:
@@ -186,7 +321,7 @@ static func excalibur_holder(view: Dictionary, team: Array, rng: RandomNumberGen
 			if evil.has(int(seat)):
 				return int(seat)
 		return by_score(candidates, public_suspicion(view), rng)[0]
-	return by_score(candidates, suspicion(view), rng)[0]
+	return by_score(candidates, good_beliefs(view).evil, rng, 0.05)[0]
 
 ## -1 keeps the cards as played.
 static func excalibur_target(view: Dictionary, team: Array, my_card: bool, rng: RandomNumberGenerator) -> int:
@@ -199,12 +334,12 @@ static func excalibur_target(view: Dictionary, team: Array, my_card: bool, rng: 
 		var evil := known_evil(view)
 		var good_looking: Array = others.filter(func(seat): return not evil.has(int(seat)))
 		return int(_pick(good_looking, rng)) if not good_looking.is_empty() and rng.randf() < 0.6 else -1
-	var score := suspicion(view, 1.5)
+	var odds: Array = good_beliefs(view).evil
 	var target: int = others[0]
 	for seat in others:
-		if score[int(seat)] > score[target]:
+		if odds[int(seat)] > odds[target]:
 			target = int(seat)
-	return target if score[target] >= 1.0 else -1
+	return target if odds[target] >= 0.5 else -1
 
 static func lady_target(view: Dictionary, eligible: Array, rng: RandomNumberGenerator) -> int:
 	if T.is_bad_role(view.role):
@@ -218,10 +353,14 @@ static func lady_target(view: Dictionary, eligible: Array, rng: RandomNumberGene
 		known[int(fact.seat)] = true
 	var unknown: Array = eligible.filter(func(seat): return not known.has(int(seat)))
 	var pool: Array = unknown if not unknown.is_empty() else eligible
-	var score := suspicion(view)
+	# Check whoever is most uncertain: the answer then tells the most.
+	var odds: Array = good_beliefs(view).evil
 	var best: int = pool[0]
+	var best_doubt := 2.0
 	for seat in pool:
-		if score[int(seat)] + rng.randf() * 0.3 > score[best]:
+		var doubt := absf(odds[int(seat)] - 0.5) + rng.randf() * 0.05
+		if doubt < best_doubt:
+			best_doubt = doubt
 			best = int(seat)
 	return best
 
@@ -240,7 +379,8 @@ static func speech(view: Dictionary, context: Dictionary, rng: RandomNumberGener
 		if evil_side:
 			claim = true if known_evil(view).has(int(lady_check.seat)) else ((not truth) if rng.randf() < 0.5 else truth)
 		parts.append("我用湖中仙女查验了%d号，是%s。" % [int(lady_check.seat) + 1, "好人" if claim else "坏人"])
-	var score := public_suspicion(view) if evil_side else suspicion(view)
+	# Good players name whoever is most likely evil (and only when it is more likely than not).
+	var score: Array = public_suspicion(view) if evil_side else good_beliefs(view, view.role != T.Role.MERLIN).evil.map(func(chance): return chance * 2.0)
 	# A captain never accuses someone it is about to take on its own team.
 	var others: Array = _range(view.count).filter(func(seat): return seat != view.seat and not seat in plan)
 	var suspect: int = -1
@@ -274,7 +414,11 @@ static func speech(view: Dictionary, context: Dictionary, rng: RandomNumberGener
 	elif view.role == T.Role.MERLIN and not view.visible.is_empty() and rng.randf() < 0.4:
 		parts.append("说不上为什么，我对%d号感觉不太好。" % (int(_pick(view.visible, rng)) + 1))
 	elif suspect >= 0 and score[suspect] >= 1.0:
-		parts.append(_pick(["我比较怀疑%d号，失败的任务里有他。" % (suspect + 1), "%d号的嫌疑最大，有他的队我不会投。" % (suspect + 1)], rng))
+		var on_failed: bool = view.missions.any(func(mission): return not mission.success and suspect in mission.team)
+		if on_failed:
+			parts.append(_pick(["我比较怀疑%d号，失败的任务里有他。" % (suspect + 1), "%d号的嫌疑最大，有他的队我不会投。" % (suspect + 1)], rng))
+		else:
+			parts.append(_pick(["我觉得%d号嫌疑最大。" % (suspect + 1), "%d号给我的感觉不太对，我会留意他。" % (suspect + 1)], rng))
 	else:
 		parts.append(_pick(["目前还看不出谁有问题，我先保留意见。", "我是好人，这轮我倾向于相信队长。", "成功的队伍可以继续用，我支持稳一点。"], rng))
 	if context.get("is_captain", false) and not plan.is_empty():

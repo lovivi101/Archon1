@@ -472,7 +472,9 @@ func _view(seat: int) -> Dictionary:
 	# Evil players reveal themselves before the assassination, so the assassin then knows every evil seat.
 	var visible: Array = revealed_evil.filter(func(s): return s != seat) if stage == T.Stage.ASSASSINATING else _visibility.get(seat, [])
 	return {"seat":seat, "role":int(players[seat].role), "visible":visible, "count":players.size(), "round":round_number,
-		"failed_votes":rejections, "proposals":proposals, "missions":missions, "facts":_facts.get(seat, [])}
+		"failed_votes":rejections, "proposals":proposals, "missions":missions, "facts":_facts.get(seat, []),
+		"excalibur_seat":excalibur_seat,
+		"hidden":range(players.size()).filter(func(s): return int(players[s].role) == T.Role.MORDRED) if stage == T.Stage.ASSASSINATING else []}
 
 func _ai_act(seat: int) -> void:
 	var view := _view(seat)

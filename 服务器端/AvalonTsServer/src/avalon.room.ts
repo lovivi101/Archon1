@@ -685,6 +685,9 @@ export class AvalonRoom {
             proposals: this.proposals,
             missions: this.missions,
             facts: this.facts.get(player.seatIndex) ?? [],
+            excaliburSeat: this.excaliburSeat,
+            hiddenFromMerlin: this.stage === Stage.Assassinating
+                ? this.players.filter((item) => item.role === Role.Mordred).map((item) => item.seatIndex) : [],
         };
     }
 

@@ -277,3 +277,40 @@ test("all-AI games at every size finish without a single invalid AI move", () =>
         else assert.equal(excaliburUses, 0);
     }
 });
+
+test("good-side possible-worlds reasoning uses night info, failure counts and Percival's pair", () => {
+    const { goodBeliefs, cleanChance } = require("../dist/avalon.ai.js");
+    const base = { round: 2, failedVotes: 0, proposals: [], facts: [] };
+    // Merlin sees evil seats 3 and 4 (5 players, 2 evil): certain.
+    const merlin = goodBeliefs({ ...base, seat: 0, role: Role.Merlin, visibleSeats: [3, 4], playerCount: 5, missions: [] });
+    assert.deepEqual(merlin.evil.map((p) => Math.round(p * 100) / 100), [0, 0, 0, 1, 1]);
+    // A servant on a failed two-person team: the partner must be evil.
+    const servant = goodBeliefs({
+        ...base, seat: 0, role: Role.Servant, visibleSeats: [], playerCount: 5,
+        missions: [{ round: 1, team: [0, 2], failCount: 1, success: false }],
+    });
+    assert.equal(servant.evil[2], 1);
+    assert.equal(cleanChance(servant, [2]), 0);
+    // Percival sees 1 and 2: exactly one of them is evil (Morgana).
+    const percival = goodBeliefs({ ...base, seat: 0, role: Role.Percival, visibleSeats: [1, 2], playerCount: 5, missions: [] });
+    assert.ok(Math.abs(percival.evil[1] + percival.evil[2] - 1) < 1e-9);
+    // A proven-good Lady result is never evil.
+    const lady = goodBeliefs({ ...base, seat: 0, role: Role.Servant, visibleSeats: [], playerCount: 7, missions: [], facts: [{ seat: 3, isGood: true }] });
+    assert.equal(lady.evil[3], 0);
+});
+
+test("all-AI games stay roughly balanced at every table size", () => {
+    for (let players = 5; players <= 10; players += 1) {
+        let goodWins = 0;
+        const games = 80;
+        for (let seed = 1; seed <= games; seed += 1) {
+            const ctx = setup({ humans: 1, players, seed: seed * 97 + players });
+            ctx.player(0).isAi = true;
+            for (let guard = 0; guard < 20000 && ctx.room.stage !== Stage.End; guard += 1) ctx.advance(150);
+            assert.equal(ctx.room.stage, Stage.End);
+            if (ctx.room.outcome.isGoodWin) goodWins += 1;
+        }
+        const rate = goodWins / games;
+        assert.ok(rate >= 0.3 && rate <= 0.8, `${players}p good win rate ${Math.round(rate * 100)}% outside 30-80%`);
+    }
+});
