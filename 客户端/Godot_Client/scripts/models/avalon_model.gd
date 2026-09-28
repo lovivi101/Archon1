@@ -10,12 +10,13 @@ var server_url := Types.DEFAULT_SERVER_URL
 var room_id := Types.DEFAULT_ROOM_ID
 var user_id := ""
 var nickname := "湖中之剑"
+var avatar := "avatar-player-knight"
 var stage := 0
 var round := 1
 var captain_seat := 0
 var failed_votes := 0
 var timeout_sec := 0
-## Local ticks (ms) when the current stage times out; 0 when the stage has no timer.
+## Local ticks (ms) when the current stage (or speech turn) times out; 0 when there is no timer.
 var deadline_ticks := 0
 ## Identifies the current decision point, so voted/acted reset exactly once per stage entry.
 var phase_key := ""
@@ -33,6 +34,34 @@ var voted := false
 var acted := false
 var last_mission: Dictionary = {}
 
+# Room settings
+var target_players := 5
+var is_public := false
+var rules: Dictionary = {"lady": false, "excalibur": false}
+var role_set: Array = []
+
+# Speeches
+var speaker_seat := -1
+var speech_order: Array = []
+var chat: Array = []
+
+# Lady of the Lake / Excalibur / assassination
+var lady_holder := -1
+var lady_history: Array = []
+var lady_eligible: Array = []
+var excalibur_seat := -1
+var last_excalibur: Dictionary = {}
+var revealed_evil: Array = []
+## Loyalties this player learned privately: [{seat, isGood}] from Lady checks and Excalibur.
+var facts: Array = []
+
+## Snapshot taken when the game ended; the results and replay pages read it, so a new game
+## started by someone else does not wipe what this player is still looking at.
+var final_result: Dictionary = {}
+
+const MAX_HISTORY := 60
+const MAX_CHAT := 60
+
 func reset() -> void:
 	stage = 0
 	round = 1
@@ -41,6 +70,20 @@ func reset() -> void:
 	timeout_sec = 0
 	deadline_ticks = 0
 	phase_key = ""
+	players = []
+	history = []
+	voted = false
+	acted = false
+	last_mission = {}
+	target_players = 5
+	is_public = false
+	rules = {"lady": false, "excalibur": false}
+	role_set = []
+	_clear_game()
+	changed.emit()
+
+## Per-game state that goes away when a room returns to the lobby.
+func _clear_game() -> void:
 	my_role = 0
 	visible_seats = []
 	selected_seats = []
@@ -49,14 +92,16 @@ func reset() -> void:
 	last_vote_passed = false
 	is_good_win = null
 	win_reason = ""
-	players = []
-	history = []
-	voted = false
-	acted = false
-	last_mission = {}
-	changed.emit()
-
-const MAX_HISTORY := 60
+	speaker_seat = -1
+	speech_order = []
+	chat = []
+	lady_holder = -1
+	lady_history = []
+	lady_eligible = []
+	excalibur_seat = -1
+	last_excalibur = {}
+	revealed_evil = []
+	facts = []
 
 func log_event(message: String) -> void:
 	_push_history({"route":0, "message":message, "round":round})
@@ -73,6 +118,10 @@ func seconds_left() -> int:
 		return -1
 	return maxi(0, ceili((deadline_ticks - Time.get_ticks_msec()) / 1000.0))
 
+func _set_timeout(seconds: int) -> void:
+	timeout_sec = seconds
+	deadline_ticks = Time.get_ticks_msec() + seconds * 1000 if seconds > 0 else 0
+
 ## JSON numbers arrive as floats, and `0 in [0.0]` is false in GDScript, so seat lists are normalized to ints.
 static func _seats(value: Variant) -> Array:
 	var result: Array = []
@@ -87,6 +136,38 @@ func _apply_progress(data: Dictionary) -> void:
 	failed_votes = int(data.get("failedVotes", failed_votes))
 	selected_seats = _seats(data.get("selectedSeats", selected_seats))
 	mission_results = data.get("missionResults", mission_results).duplicate()
+	speaker_seat = int(data.get("speakerSeat", speaker_seat))
+	speech_order = _seats(data.get("speechOrder", speech_order))
+	lady_holder = int(data.get("ladyHolder", lady_holder))
+	lady_history = data.get("ladyHistory", lady_history).duplicate(true)
+	lady_eligible = _seats(data.get("ladyEligible", lady_eligible))
+	excalibur_seat = int(data.get("excaliburSeat", excalibur_seat))
+	revealed_evil = _seats(data.get("revealedEvil", revealed_evil))
+
+func _apply_room(room: Dictionary) -> void:
+	room_id = str(room.get("roomId", room_id))
+	stage = int(room.get("stage", stage))
+	target_players = int(room.get("targetPlayers", target_players))
+	is_public = bool(room.get("isPublic", is_public))
+	rules = room.get("rules", rules).duplicate()
+	role_set = _seats(room.get("roleSet", role_set))
+	_apply_progress(room)
+	players = room.get("players", players).duplicate(true)
+
+## Public events are logged into the chat as system lines, so the discussion shows what just happened.
+func _system(text: String) -> void:
+	chat.append({"seat": -1, "nickname": "", "text": text, "channel": "system", "round": round})
+	while chat.size() > MAX_CHAT:
+		chat.pop_front()
+
+static func _seat_list(seats: Array) -> String:
+	return "、".join(PackedStringArray(seats.map(func(seat): return "%d号" % (int(seat) + 1))))
+
+func _learn(seat: int, is_good: bool) -> void:
+	for fact in facts:
+		if int(fact.seat) == seat:
+			return
+	facts.append({"seat": seat, "isGood": is_good})
 
 func apply_packet(route: int, data: Dictionary) -> void:
 	match route:
@@ -94,11 +175,7 @@ func apply_packet(route: int, data: Dictionary) -> void:
 			user_id = str(data.get("userId", user_id))
 			session = "logged_in"
 		102, 201, 202, 203:
-			var room: Dictionary = data.get("room", data)
-			room_id = str(room.get("roomId", room_id))
-			stage = int(room.get("stage", stage))
-			_apply_progress(room)
-			players = room.get("players", players).duplicate(true)
+			_apply_room(data.get("room", data))
 			if route == 102:
 				session = "in_room"
 		302:
@@ -111,37 +188,69 @@ func apply_packet(route: int, data: Dictionary) -> void:
 				voted = false
 				acted = false
 			if stage == Types.Stage.PREPARING:
-				my_role = 0
-				visible_seats = []
-				is_good_win = null
-				win_reason = ""
-			timeout_sec = int(data.get("timeout", 0))
-			deadline_ticks = Time.get_ticks_msec() + timeout_sec * 1000 if timeout_sec > 0 else 0
+				_clear_game()
+			_set_timeout(int(data.get("timeout", 0)))
 		303:
 			my_role = int(data.get("role", 0))
 			visible_seats = _seats(data.get("visibleSeats", []))
+			for fact in data.get("facts", []):
+				_learn(int(fact.get("seat", -1)), bool(fact.get("isGood", true)))
 		402:
 			captain_seat = int(data.get("captainSeat", captain_seat))
 			selected_seats = _seats(data.get("selectedSeats", []))
+			excalibur_seat = int(data.get("excaliburSeat", -1))
 			voted = false
+			_system("第%d轮 队长%d号提名 %s" % [round, captain_seat + 1, _seat_list(selected_seats)] + ("，王者之剑给%d号" % (excalibur_seat + 1) if excalibur_seat >= 0 else ""))
 		502:
 			# Captain, round and vote counters come from the following RoomInfoInit/StageChange.
 			last_votes = data.get("votes", []).duplicate()
 			last_vote_passed = bool(data.get("isPassed", false))
+			var approvals: Array = []
+			for seat in last_votes.size():
+				if last_votes[seat]:
+					approvals.append(seat)
+			_system("投票%s，赞成：%s" % ["通过" if last_vote_passed else "否决", _seat_list(approvals) if not approvals.is_empty() else "无"])
 		602:
 			last_mission = data.duplicate(true)
 			var result_round := int(data.get("round", round))
 			while mission_results.size() < result_round:
 				mission_results.append(false)
 			mission_results[result_round - 1] = bool(data.get("isSuccess", false))
+			_system("第%d轮任务%s，失败票 %d 张" % [result_round, "成功" if data.get("isSuccess", false) else "失败", int(data.get("failCount", 0))])
 		702:
-			stage = 6
+			stage = Types.Stage.END
 			deadline_ticks = 0
 			is_good_win = bool(data.get("isGoodWin", false))
 			win_reason = str(data.get("winReason", "对局结束"))
 			players = data.get("allRoles", players).duplicate(true)
-	if route in [303, 402, 502, 602, 702]:
+		703:
+			revealed_evil = _seats(data.get("evilSeats", []))
+			_system("坏人亮明身份：%s" % _seat_list(revealed_evil))
+		802:
+			chat.append(data.duplicate(true))
+			while chat.size() > MAX_CHAT:
+				chat.pop_front()
+		804:
+			speaker_seat = int(data.get("speakerSeat", -1))
+			speech_order = _seats(data.get("speechOrder", speech_order))
+			_set_timeout(int(data.get("timeout", 0)))
+		902:
+			_learn(int(data.get("targetSeat", -1)), bool(data.get("isGood", true)))
+		903:
+			lady_history.append({"round": int(data.get("round", round)), "holderSeat": int(data.get("holderSeat", -1)), "targetSeat": int(data.get("targetSeat", -1))})
+			lady_holder = int(data.get("targetSeat", lady_holder))
+			_system("%d号用湖中仙女查验了%d号" % [int(data.get("holderSeat", -1)) + 1, int(data.get("targetSeat", -1)) + 1])
+		905:
+			if not bool(data.get("originalSuccess", true)):
+				_learn(int(data.get("targetSeat", -1)), false)
+		906:
+			last_excalibur = data.duplicate(true)
+			var flipped := int(data.get("targetSeat", -1))
+			_system("%d号%s" % [int(data.get("holderSeat", -1)) + 1, "用王者之剑翻转了%d号的牌" % (flipped + 1) if flipped >= 0 else "没有使用王者之剑"])
+	if route in [303, 402, 502, 602, 702, 903, 906]:
 		_push_history({"route": route, "round": round, "data": data.duplicate(true), "time": Time.get_datetime_string_from_system()})
+	if route == 702:
+		final_result = snapshot()
 	changed.emit()
 
 func my_seat() -> int:
@@ -155,6 +264,31 @@ func is_captain() -> bool:
 
 func is_member() -> bool:
 	return my_seat() in selected_seats
+
+## What this player must do right now in the current stage, or "" when nothing is pending.
+func pending_action() -> String:
+	var me := my_seat()
+	if me < 0:
+		return ""
+	match stage:
+		Types.Stage.SPEAKING:
+			return "发言" if speaker_seat == me else ""
+		Types.Stage.PROPOSING:
+			return "组队" if captain_seat == me else ""
+		Types.Stage.VOTING:
+			return "" if voted else "投票"
+		Types.Stage.MISSION:
+			return "出任务牌" if is_member() and not acted else ""
+		Types.Stage.EXCALIBUR:
+			return "决定王者之剑" if excalibur_seat == me and not acted else ""
+		Types.Stage.LADY_OF_LAKE:
+			return "用湖中仙女查验" if lady_holder == me and not acted else ""
+		Types.Stage.ASSASSINATING:
+			return "刺杀梅林" if my_role == Types.Role.ASSASSIN else ""
+	return ""
+
+func is_speaker() -> bool:
+	return stage == Types.Stage.SPEAKING and my_seat() >= 0 and speaker_seat == my_seat()
 
 ## Whether this player's side won the finished game; null before the end or without a known role.
 func did_i_win() -> Variant:
@@ -172,4 +306,8 @@ func snapshot() -> Dictionary:
 		"results": mission_results.duplicate(), "votes": last_votes.duplicate(), "passed": last_vote_passed,
 		"failed_votes": failed_votes, "voted": voted, "acted": acted, "winner": is_good_win, "reason": win_reason,
 		"mission": last_mission.duplicate(), "history": history.duplicate(true), "team_size": get_team_size(),
-		"won": did_i_win(), "seconds_left": seconds_left()}
+		"won": did_i_win(), "seconds_left": seconds_left(),
+		"target_players": target_players, "rules": rules.duplicate(), "role_set": role_set.duplicate(),
+		"speaker": speaker_seat, "chat": chat.duplicate(true), "lady_holder": lady_holder, "lady_history": lady_history.duplicate(true),
+		"lady_eligible": lady_eligible.duplicate(), "excalibur": excalibur_seat, "last_excalibur": last_excalibur.duplicate(),
+		"evil": revealed_evil.duplicate(), "facts": facts.duplicate(true), "final": not final_result.is_empty()}

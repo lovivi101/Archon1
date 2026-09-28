@@ -123,10 +123,11 @@ export class AvalonRoom {
 
     // ---- membership ----
 
-    public join(userId: string, nickname: string): void {
+    public join(userId: string, nickname: string, avatar = ""): void {
         const existing = this.find(userId);
         if (existing && !existing.isAi) {
             existing.nickname = nickname;
+            existing.avatar = avatar;
             existing.isOnline = true;
             existing.autopilot = false;
             return;
@@ -135,7 +136,7 @@ export class AvalonRoom {
         if (this.stage !== Stage.Preparing) throw new RoomError(ErrorCode.Conflict, "游戏已经开始");
         if (this.players.length >= this.targetPlayers) throw new RoomError(ErrorCode.Conflict, "房间已满");
         this.players.push({
-            userId, nickname, avatar: "", isReady: false, seatIndex: this.players.length,
+            userId, nickname, avatar, isReady: false, seatIndex: this.players.length,
             role: Role.Unknown, isAi: false, isOnline: true, autopilot: false,
         });
     }

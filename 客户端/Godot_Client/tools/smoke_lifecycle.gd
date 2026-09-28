@@ -30,6 +30,8 @@ func play_until(done: Callable, seconds := 40.0) -> bool:
 			for i in model.get_team_size():
 				controller.team_choice.append(i)
 			controller.submit_team()
+		if model.is_speaker():
+			controller.end_speech()
 		if model.stage == 3 and not model.voted:
 			controller.vote(true)
 		if model.stage == 4 and model.is_member() and not model.acted:

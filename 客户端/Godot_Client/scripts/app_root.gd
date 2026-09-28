@@ -12,6 +12,7 @@ var controller: AvalonController = Controller.new()
 
 func _ready() -> void:
 	profile.load_data()
+	AudioServer.set_bus_mute(0, bool(profile.data.get("muted", false)))
 	add_child(network)
 	add_child(local_game)
 	add_child(controller)

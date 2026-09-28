@@ -23,6 +23,8 @@ func run() -> void:
 			for i in model.get_team_size():
 				chosen.append(i)
 			controller._send(401, {"userId": model.user_id, "selectedSeats": chosen})
+		if model.is_speaker():
+			controller.end_speech()
 		if model.stage == 3 and not model.voted:
 			controller.vote(true)
 		if model.stage == 4 and model.is_member() and not model.acted:

@@ -48,7 +48,8 @@ mapping = {
 10:"bg-role-reveal-hall-750x1334",11:"bg-mission-table-750x1334",
 12:"bg-assassination-hall-750x1334",13:"bg-records-hall-750x1334",
 14:"bg-records-hall-750x1334",15:"bg-records-hall-750x1334",
-16:"bg-friends-library-750x1334"
+16:"bg-friends-library-750x1334",
+17:"bg-role-reveal-hall-750x1334"
 }
 for number,background in mapping.items():
     scene = f'''[gd_scene load_steps=3 format=3]

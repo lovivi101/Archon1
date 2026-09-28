@@ -11,7 +11,7 @@ func run() -> void:
 	var controller: AvalonController = root.get_node("AvalonApp").controller
 	controller.create_local_room(5, 42)
 	controller.ready()
-	for number in range(2, 17):
+	for number in range(2, 19):
 		print("OPEN_PAGE %d" % number)
 		var packed: PackedScene = load("res://scenes/page_%02d.tscn" % number)
 		if packed == null:
@@ -31,7 +31,7 @@ func run() -> void:
 				return
 		scene.queue_free()
 		await process_frame
-	print("ALL_15_PAGES_RENDERED")
+	print("ALL_17_PAGES_RENDERED")
 	for i in 160:
 		if not root.get_node("AvalonApp").local_game.running:
 			break

@@ -1,7 +1,7 @@
 extends RefCounted
 ## Local profile, replay and contacts. No pretend cloud data.
 var path := "user://profile.json"
-var data: Dictionary = {"id":"", "nickname":"湖中之剑", "url":"ws://127.0.0.1:8888", "friends":[], "matches":[], "tokens":{}}
+var data: Dictionary = {"id":"", "nickname":"湖中之剑", "url":"ws://127.0.0.1:8888", "avatar":"avatar-player-knight", "friends":[], "matches":[], "tokens":{}, "agreed":false, "muted":false}
 func load_data() -> void:
 	if FileAccess.file_exists(path):
 		var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))

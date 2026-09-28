@@ -18,11 +18,11 @@ var rng := RandomNumberGenerator.new()
 var outcome: Dictionary = {}
 var room_id := "练习"
 
-func create_room(user_id: String, nickname: String, count := 5, seed_value := -1) -> void:
+func create_room(user_id: String, nickname: String, count := 5, seed_value := -1, avatar := "") -> void:
 	rng.randomize()
 	if seed_value >= 0:
 		rng.seed = seed_value
-	players = [{"userId":user_id, "nickname":nickname, "seatIndex":0, "isAi":false, "isReady":false, "role":0}]
+	players = [{"userId":user_id, "nickname":nickname, "avatar":avatar, "seatIndex":0, "isAi":false, "isReady":false, "role":0}]
 	var names := ["灰袍贤者", "北境女王", "林中旅人", "山岭铁卫", "暗影祭司", "夜鸦", "堕落骑士", "湖畔游侠", "银月守卫"]
 	for i in range(1, clampi(count, 5, 10)):
 		players.append({"userId":"bot-%d" % i, "nickname":names[i-1], "seatIndex":i, "isAi":true, "isReady":true, "role":0})

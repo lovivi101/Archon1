@@ -23,6 +23,14 @@ var login_with_token := false
 var auto_join := false
 ## Last notice shown to the player; pages redraw it after rebuilding.
 var last_notice := ""
+## What to do once logged in: {"type": "quick"|"create"|"join", "count": int, "roomId": String}; empty joins the default room.
+var pending_entry: Dictionary = {}
+## Table size chosen in the lobby.
+var lobby_count := 5
+## Excalibur recipient picked by the captain (10-player games).
+var excalibur_choice := -1
+## Second tap on "退出对局" within this tick deadline confirms leaving.
+var exit_armed_until := 0
 
 func setup(next_model: AvalonModel, next_network: AvalonNetwork, demo: Node, store: RefCounted) -> void:
 	model = next_model
@@ -36,6 +44,7 @@ func setup(next_model: AvalonModel, next_network: AvalonNetwork, demo: Node, sto
 	model.changed.connect(func(): changed.emit())
 	model.user_id = str(profile.data.id)
 	model.nickname = str(profile.data.nickname)
+	model.avatar = str(profile.data.get("avatar", model.avatar))
 	model.server_url = str(profile.data.url)
 
 func _process(delta: float) -> void:
@@ -52,9 +61,11 @@ func _process(delta: float) -> void:
 			network.connect_to_url(model.server_url)
 
 func show_page(next_page: int) -> void:
-	if clampi(next_page, 1, 16) != page:
+	if clampi(next_page, 1, 18) != page:
 		last_notice = ""
-	page = clampi(next_page, 1, 16)
+	page = clampi(next_page, 1, 18)
+	if page == 18:
+		avatar_choice = model.avatar
 	if page in [14,15,16]:
 		resume_page = 13 if model.stage == T.Stage.END else (4 if model.stage == T.Stage.PREPARING else maxi(7, page_for_stage(model.stage)))
 	page_changed.emit(page)
@@ -77,10 +88,12 @@ func create_local_room(count := 5, seed_value := -1) -> void:
 	network.close()
 	model.mode = "local_demo"
 	model.reset()
-	local_game.create_room(model.user_id, model.nickname, count, seed_value)
+	local_game.create_room(model.user_id, model.nickname, count, seed_value, model.avatar)
 	show_page(4)
 
-func connect_server(url: String) -> void:
+## Connects (if needed), logs in, then performs `entry` (quick match / create / join by code).
+## Without an entry the player joins the default room, as older builds did.
+func connect_server(url: String, entry: Dictionary = {}) -> void:
 	var normalized := url.strip_edges()
 	if not normalized.begins_with("ws://") and not normalized.begins_with("wss://"):
 		notice.emit("请输入 ws:// 或 wss:// 地址")
@@ -93,9 +106,64 @@ func connect_server(url: String) -> void:
 	profile.save()
 	manual_close = false
 	auto_join = true
+	pending_entry = entry.duplicate()
 	reconnect_attempts = 0
-	network.connect_to_url(normalized)
+	if network.state == "open" and model.session in ["logged_in", "in_room"] and network.url == normalized:
+		_enter_room()
+	else:
+		network.connect_to_url(normalized)
 	show_page(3)
+
+const AVATARS := ["avatar-player-knight", "avatar-loyal-female", "avatar-dwarf-warrior", "avatar-merlin", "avatar-morgana", "avatar-assassin"]
+## Avatar picked on the settings page before saving.
+var avatar_choice := ""
+
+## Saves nickname (1-12 characters) and avatar; they are sent with the next room join.
+func save_profile(nickname: String, avatar: String) -> bool:
+	var name := nickname.strip_edges()
+	if name.is_empty() or name.length() > 12:
+		notice.emit("昵称需要 1 到 12 个字")
+		return false
+	model.nickname = name
+	model.avatar = avatar if avatar in AVATARS else AVATARS[0]
+	profile.data.nickname = model.nickname
+	profile.data.avatar = model.avatar
+	profile.save()
+	notice.emit("已保存")
+	model.changed.emit()
+	return true
+
+func set_muted(muted: bool) -> void:
+	AudioServer.set_bus_mute(0, muted)
+	profile.data.muted = muted
+	profile.save()
+	model.changed.emit()
+
+func quick_match(url: String, count: int) -> void:
+	connect_server(url, {"type": "quick", "count": count})
+
+func create_room(url: String, count: int) -> void:
+	connect_server(url, {"type": "create", "count": count})
+
+func join_room_code(url: String, code: String) -> void:
+	var room_code := code.strip_edges()
+	if room_code.is_empty():
+		notice.emit("请输入房间号")
+		return
+	connect_server(url, {"type": "join", "roomId": room_code})
+
+func _enter_room() -> void:
+	match str(pending_entry.get("type", "")):
+		"quick":
+			network.send(T.Route.QUICK_MATCH, {"playerCount": int(pending_entry.count), "nickname": model.nickname, "avatar": model.avatar})
+		"create":
+			network.send(T.Route.CREATE_ROOM, {"playerCount": int(pending_entry.count), "nickname": model.nickname, "avatar": model.avatar})
+		"join":
+			network.send(T.Route.JOIN_ROOM, {"roomId": str(pending_entry.roomId), "mustExist": true, "nickname": model.nickname, "avatar": model.avatar})
+		_:
+			network.send(T.Route.JOIN_ROOM, {"roomId": model.room_id, "nickname": model.nickname, "avatar": model.avatar})
+	# After the first join, reconnects go back to the same room by id.
+	pending_entry = {}
 
 func leave_room() -> void:
 	if model.mode == "local_demo":
@@ -108,12 +176,62 @@ func leave_room() -> void:
 	model.reset()
 	show_page(2)
 
-## "Play again" from the results page: online, a Ready resets the finished room on the server.
+## "Play again" from the results page: online, a Ready resets the finished room (or readies in the new lobby).
 func play_again() -> void:
 	if model.mode == "network" and network.state == "open" and model.session == "in_room":
-		_send(T.Route.READY, {})
+		_send(T.Route.READY, {"ready": true})
+		show_page(4)
 	else:
 		create_local_room()
+
+## Leaving mid-game needs a second tap within three seconds; the server then plays the seat.
+func exit_game() -> void:
+	if Time.get_ticks_msec() > exit_armed_until:
+		exit_armed_until = Time.get_ticks_msec() + 3000
+		notice.emit("再点一次“退出”确认离开，你的座位将由 AI 托管")
+		return
+	exit_armed_until = 0
+	leave_room()
+
+func toggle_ready() -> bool:
+	if model.mode == "local_demo":
+		return ready()
+	var me := model.my_seat()
+	var is_ready: bool = me >= 0 and me < model.players.size() and bool(model.players[me].get("isReady", false))
+	return _send(T.Route.READY, {"ready": not is_ready})
+
+func send_chat(text: String) -> bool:
+	var message := text.strip_edges()
+	if message.is_empty():
+		return false
+	return _send(T.Route.CHAT, {"text": message})
+
+func end_speech() -> bool:
+	return _send(T.Route.END_SPEECH, {})
+
+func lady_check(seat: int) -> bool:
+	if model.stage != T.Stage.LADY_OF_LAKE or model.lady_holder != model.my_seat() or model.acted:
+		return false
+	var sent := _send(T.Route.LADY_CHECK, {"targetSeat": seat})
+	if sent:
+		model.acted = true
+		model.changed.emit()
+	return sent
+
+## seat -1 keeps the cards as played.
+func use_excalibur(seat: int) -> bool:
+	if model.stage != T.Stage.EXCALIBUR or model.excalibur_seat != model.my_seat() or model.acted:
+		return false
+	var sent := _send(T.Route.EXCALIBUR_USE, {"targetSeat": seat})
+	if sent:
+		model.acted = true
+		model.changed.emit()
+	return sent
+
+func choose_excalibur(seat: int) -> void:
+	if seat in team_choice and seat != model.my_seat():
+		excalibur_choice = seat
+		model.changed.emit()
 
 func ready() -> bool:
 	if model.mode == "local_demo":
@@ -128,10 +246,21 @@ func choose_seat(seat: int) -> void:
 	if model.stage == T.Stage.PROPOSING and model.is_captain():
 		if seat in team_choice:
 			team_choice.erase(seat)
+			if seat == excalibur_choice:
+				excalibur_choice = -1
 		elif team_choice.size() < model.get_team_size():
 			team_choice.append(seat)
 		model.changed.emit()
 	elif model.stage == T.Stage.ASSASSINATING and model.my_role == T.Role.ASSASSIN:
+		if seat in model.revealed_evil:
+			notice.emit("不能刺杀坏人同伴")
+			return
+		team_choice = [seat]
+		model.changed.emit()
+	elif model.stage == T.Stage.LADY_OF_LAKE and model.lady_holder == model.my_seat():
+		if not seat in model.lady_eligible:
+			notice.emit("不能查验自己或曾经持有湖中仙女的玩家")
+			return
 		team_choice = [seat]
 		model.changed.emit()
 
@@ -139,7 +268,13 @@ func submit_team() -> bool:
 	if not model.is_captain() or model.stage != T.Stage.PROPOSING or team_choice.size() != model.get_team_size():
 		notice.emit("请先选择 %d 名队员" % model.get_team_size())
 		return false
-	return _send(T.Route.PROPOSE_TEAM, {"userId":model.user_id, "selectedSeats":team_choice.duplicate()})
+	var payload := {"userId":model.user_id, "selectedSeats":team_choice.duplicate()}
+	if bool(model.rules.get("excalibur", false)):
+		if not excalibur_choice in team_choice or excalibur_choice == model.my_seat():
+			notice.emit("请把王者之剑交给一名队员（不能是自己）")
+			return false
+		payload["excaliburSeat"] = excalibur_choice
+	return _send(T.Route.PROPOSE_TEAM, payload)
 
 func vote(approve: bool) -> bool:
 	if model.stage != T.Stage.VOTING or model.voted:
@@ -230,11 +365,13 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 				profile.data.tokens = tokens
 				profile.save()
 				if auto_join:
-					network.send(T.Route.JOIN_ROOM, {"roomId":model.room_id,"userId":model.user_id,"nickname":model.nickname})
+					_enter_room()
 		T.Route.JOIN_ROOM:
 			show_page(4)
 		T.Route.GAME_START:
 			team_choice.clear()
+			excalibur_choice = -1
+			model.final_result = {}
 			reveal_seen = false
 			show_page(5)
 		T.Route.IDENTITY_PUSH:
@@ -242,7 +379,10 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 			show_page(6)
 		T.Route.STAGE_CHANGE:
 			team_choice.clear()
-			if model.stage == T.Stage.NIGHT:
+			excalibur_choice = -1
+			if model.stage == T.Stage.PREPARING and page in [13, 14]:
+				notice.emit("有玩家开始了新一局，点击“再来一局”回到房间")
+			elif model.stage == T.Stage.NIGHT:
 				if page < 5:
 					show_page(5)
 			elif page == 11:
@@ -251,6 +391,10 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 				show_page(page_for_stage(model.stage))
 		T.Route.TEAM_PROPOSED:
 			team_choice = model.selected_seats.duplicate()
+		T.Route.LADY_RESULT:
+			notice.emit("湖中仙女：%d号是%s" % [int(payload.get("targetSeat", -1)) + 1, "好人" if payload.get("isGood", true) else "坏人"])
+		T.Route.EXCALIBUR_RESULT:
+			notice.emit("王者之剑：%d号原本出的是%s" % [int(payload.get("targetSeat", -1)) + 1, "成功" if payload.get("originalSuccess", true) else "失败"])
 		T.Route.VOTE_RESULT:
 			last_result_route = route
 			show_page(11)
@@ -272,4 +416,7 @@ func page_for_stage(stage: int) -> int:
 		T.Stage.MISSION: return 10
 		T.Stage.ASSASSINATING: return 12
 		T.Stage.END: return 13
+		T.Stage.SPEAKING: return 7
+		T.Stage.LADY_OF_LAKE: return 17
+		T.Stage.EXCALIBUR: return 10
 	return 2

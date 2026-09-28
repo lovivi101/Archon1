@@ -245,9 +245,11 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
 
     private enterRoom(client: ClientConnection, userId: string, room: AvalonRoom, payload: Record<string, any>): void {
         const nickname = (String(payload.nickname ?? client.nickname ?? "").trim() || `Player_${userId}`).slice(0, 64);
+        // Avatars are client art keys such as "avatar-merlin"; anything else falls back to the default.
+        const avatar = typeof payload.avatar === "string" && /^[a-z0-9-]{1,32}$/.test(payload.avatar) ? payload.avatar : "";
         this.userRooms.set(userId, room.id);
         try {
-            room.join(userId, nickname);
+            room.join(userId, nickname, avatar);
         } catch (error) {
             if (!room.hasMember(userId)) this.userRooms.delete(userId);
             this.collect(room);
