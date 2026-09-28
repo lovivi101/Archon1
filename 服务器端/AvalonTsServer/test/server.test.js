@@ -202,3 +202,37 @@ test("empty lobbies are closed when the last player leaves", async () => {
     assert.equal((await health()).rooms, before - 1);
     client.close();
 });
+
+test("guest login issues a token that resumes the same account and replaces the old connection", async () => {
+    const first = await new Client().open();
+    const mark = first.packets.length;
+    first.send(101, { nickname: "Guest A" });
+    const guest = await first.wait(101, () => true, mark);
+    assert.equal(guest.code, 0);
+    assert.equal(guest.provider, "guest");
+    assert.match(guest.userId, /^g_/);
+    assert.ok(guest.token && guest.expiresAt > Date.now());
+    const closed = new Promise((resolve) => first.socket.once("close", resolve));
+
+    const second = await new Client().open();
+    second.send(101, { token: guest.token, userId: "someone-else" });
+    const resumed = await second.wait(101);
+    assert.equal(resumed.code, 0);
+    assert.equal(resumed.provider, "token");
+    assert.equal(resumed.userId, guest.userId);
+    assert.equal(await closed, 4001, "the older connection is closed");
+
+    const forged = await new Client().open();
+    forged.send(101, { token: `${guest.token.slice(0, -2)}xx` });
+    assert.equal((await forged.wait(101)).code, 401);
+    second.close();
+    forged.close();
+});
+
+test("login attempts are rate limited per connection", async () => {
+    const client = await new Client().open();
+    for (let attempt = 0; attempt < 10; attempt += 1) client.send(101, { token: "v1.bad.token" });
+    client.send(101, {});
+    await client.wait(101, (payload) => payload.code === 429);
+    client.close();
+});

@@ -48,6 +48,7 @@ export enum ErrorCode {
     Forbidden = 403,
     NotFound = 404,
     Conflict = 409,
+    TooManyRequests = 429,
     Unavailable = 503,
 }
 

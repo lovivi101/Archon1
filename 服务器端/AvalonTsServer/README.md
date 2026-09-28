@@ -38,6 +38,22 @@ npm run dev
 - **再来一局**：结算后任一玩家发送 `Ready`，或有新玩家加入，房间都会回到准备阶段（移除 AI 和已离开的玩家，所有人需重新准备）。
 - **AI 不读隐藏身份**：AI 只使用本座位按规则可见的信息和公开的组队、投票、任务记录做决策。刺杀阶段按规则坏人亮明身份，所以刺客此时知道所有坏人，但要靠对局表现推测谁是梅林。
 
+## 登录与鉴权
+
+`Login`(101) 按以下优先级识别登录方式，成功后返回 `{ code: 0, userId, nickname, provider, token, expiresAt }`。客户端应保存 `token`，下次登录时优先发送它：
+
+| 请求字段 | provider | 说明 |
+|---|---|---|
+| `token` | `token` | 恢复之前的账号。令牌由服务端用 HMAC-SHA256 签名，有效期 `AVALON_TOKEN_TTL_DAYS` 天；被篡改、过期或由其他密钥签发的令牌返回 401 |
+| `wxCode`（或 `code`） | `wechat` | 微信小游戏 `wx.login()` 拿到的 code，服务端调用 `jscode2session` 换取 openid。userId 为 `wx_` 加 openid 的哈希，其他玩家从房间快照里看不到 openid；`session_key` 不保存。未配置 `WECHAT_APPID`/`WECHAT_SECRET` 时返回 503 |
+| 什么都不带，或 `guest: true` | `guest` | 新建一个随机游客账号（`g_` 开头，不可猜测） |
+| `userId` | `legacy` | 旧版“客户端自报 ID”，现有 Cocos/Godot Demo 使用这种方式。**生产环境默认关闭**（返回 401），开发环境默认开启，可用 `AVALON_ALLOW_LEGACY_LOGIN` 覆盖；不能使用 `wx_`、`g_`、`ai-` 前缀 |
+
+- 同一账号在新连接登录时，旧连接会以关闭码 4001 断开。
+- 每个连接 60 秒内最多尝试登录 10 次，超出返回 429。
+- `NODE_ENV=production` 时必须设置至少 32 个字符的 `AVALON_TOKEN_SECRET`，否则服务拒绝启动。开发环境未设置时使用随机密钥，重启后旧令牌失效，客户端需要重新以游客或微信方式登录。
+- 令牌是无状态的，目前不支持提前吊销；更换 `AVALON_TOKEN_SECRET` 会让所有令牌失效。
+
 ## 协议补充
 
 - 所有请求失败都会在**请求的同一路由**返回 `{ code, message, seq }`，`seq` 是请求包的序号。错误码：400 参数错误、401 未登录、403 无权限（例如不是队长、不在任务队伍中）、404 不在房间或路由不存在、409 状态冲突（阶段不对、重复投票、房间已满或已开局）、503 服务不可用。
@@ -64,6 +80,11 @@ npm run dev
 | `AVALON_AI_DELAY_MS` | 同 `AVALON_AI_TICK_MS` | 每个阶段开始后 AI 等待多久再行动 |
 | `AVALON_MAX_ROOMS` | 1000 | 同时存在的房间上限 |
 | `AVALON_ABANDON_SECONDS` | 60 | 对局中无人在线多久后回收房间 |
+| `AVALON_TOKEN_SECRET` | 开发环境随机 | 登录令牌签名密钥，生产环境必填且不少于 32 个字符 |
+| `AVALON_TOKEN_TTL_DAYS` | 30 | 令牌有效天数 |
+| `AVALON_ALLOW_LEGACY_LOGIN` | 生产环境 0，其他 1 | 是否允许客户端自报 `userId` 登录 |
+| `WECHAT_APPID` / `WECHAT_SECRET` | 空 | 小游戏的 AppID 和 AppSecret，都填写后才启用微信登录 |
+| `WECHAT_API_BASE` | `https://api.weixin.qq.com` | 微信接口地址，测试时可指向模拟服务 |
 
 Go Due 服务端仍保留在 `服务器端/Due_Server`，作为后续 Redis、etcd、gRPC 集群化实现。这个 TypeScript 服务不复用 Due 的注册中心，因此本地联调不需要预先启动 Redis 和 etcd。
 
@@ -74,20 +95,22 @@ Go Due 服务端仍保留在 `服务器端/Due_Server`，作为后续 Redis、et
 - `src/health.controller.ts`：`GET /health` 诊断接口。
 - `src/game.gateway.ts`：WebSocket 连接、断开和二进制消息入口。
 - `src/protocol.ts`：二进制包的编码和解码。
+- `src/auth.service.ts`：游客、令牌、微信登录和旧版 userId 登录，令牌签发与校验。
 - `src/game.service.ts`：登录、房间注册表、路由分发、错误回包、定时推进和空房间回收。
 - `src/avalon.room.ts`：单个房间的规则状态机（纯逻辑，不直接操作 socket 或定时器，时钟和随机数可注入，便于测试）。
 - `src/avalon.ai.ts`：AI 决策，只接收该座位可见的信息。
 - `src/avalon.types.ts`：路由、身份、阶段、错误码和规则常量。
 
-NestJS 提供成熟的应用结构和运行机制，但不会自动保证现有阿瓦隆规则正确。当前登录玩家资料可持久化到 PostgreSQL；房间、身份和对局仍保存在进程内存中，重启会丢失，也尚未接入正式鉴权，不应直接作为生产服务发布。
+NestJS 提供成熟的应用结构和运行机制，但不会自动保证现有阿瓦隆规则正确。当前登录玩家资料可持久化到 PostgreSQL，登录支持游客、令牌和微信；房间、身份和对局仍保存在进程内存中，重启会丢失，只能单实例运行。
 
 ## Docker Compose 一键部署（Linux / macOS / Windows）
 
 需要预先安装 Docker Engine + Compose 插件，或 Docker Desktop。Docker 会拉取 PostgreSQL 17 镜像和 Node 22 镜像，无需在宿主机单独安装数据库或 Node.js。
 
 1. 将 `.env.example` 复制为 `.env`，务必把 `POSTGRES_PASSWORD` 改成唯一的长随机密码。`.env` 已加入 Git 和 Docker 构建忽略列表。
-2. 在本目录运行 `docker compose up -d --build --wait`。Compose 会等待 PostgreSQL 健康、执行 `migrations/*.sql`，再启动服务器。数据库保存在 `pgdata` 命名卷中。
-3. 访问 `http://127.0.0.1:8888/health`；返回 `ok: true`、`database: "ready"` 表示服务和数据库可用。`HOST_PORT` 可改宿主机端口，容器内仍是 8888。
+2. 同样在 `.env` 中设置 `AVALON_TOKEN_SECRET`（至少 32 个字符的随机串），需要微信登录时再填 `WECHAT_APPID` 和 `WECHAT_SECRET`。
+3. 在本目录运行 `docker compose up -d --build --wait`。Compose 会等待 PostgreSQL 健康、执行 `migrations/*.sql`，再启动服务器。数据库保存在 `pgdata` 命名卷中。
+4. 访问 `http://127.0.0.1:8888/health`；返回 `ok: true`、`database: "ready"` 表示服务和数据库可用。`HOST_PORT` 可改宿主机端口，容器内仍是 8888。
 
 ```text
 docker compose ps
@@ -99,7 +122,7 @@ docker compose down
 
 服务端在 Compose 中输出单行 JSON 日志到标准输出；HTTP 响应带 `X-Request-Id`（成功的健康检查不写访问日志），WebSocket 连接有 `connectionId`，路由日志包含 `seq`、`route` 和耗时。日志不记录包体、昵称或密码。Docker 的 `json-file` 日志每个服务最多保留 5 个 10 MB 文件，过期日志会轮转删除；长期留存需要接入集中日志系统。数据库没有对宿主机开放端口。
 
-当前数据库持久化的是登录玩家资料，**不是正式账号验证**：客户端提交的 `userId` 仍可自行指定。房间、身份、对局进度依旧在进程内存中，重启会丢失，当前只能运行单个服务实例；要上线多人/多副本，还需实现正式鉴权、房间持久化或共享状态、备份、TLS/WSS、反向代理和完整对局测试。请不要用 `docker compose down -v`，那会删除数据库卷。
+Compose 以 `NODE_ENV=production` 运行，因此 `.env` 必须设置 `AVALON_TOKEN_SECRET`，并且默认关闭旧版 `userId` 登录。现有 Cocos/Godot Demo 仍使用旧版登录，接入令牌前如需在自己的服务器上联调，可临时设置 `AVALON_ALLOW_LEGACY_LOGIN=1`，**不要在公网服务器上开启**。房间、身份、对局进度依旧在进程内存中，重启会丢失，当前只能运行单个服务实例；要上线多人/多副本，还需实现房间持久化或共享状态、备份、TLS/WSS、反向代理。请不要用 `docker compose down -v`，那会删除数据库卷。
 
 ## 测试
 
@@ -108,7 +131,7 @@ npm test          # 编译后运行 test/ 下的规则单元测试和 WebSocket 
 npm run test:smoke
 ```
 
-`npm test` 不依赖数据库，会在随机端口启动独立服务，覆盖夜晚视野、各类非法操作的错误码、超时托管、结束后重开、离开与重连、多房间隔离等场景。
+`npm test` 不依赖数据库，会在随机端口启动独立服务，覆盖登录与令牌（含模拟微信接口）、夜晚视野、各类非法操作的错误码、超时托管、结束后重开、离开与重连、多房间隔离等场景。
 
 `test:smoke` 先运行 `npm test`，再直接加载 Cocos 项目中的 `AvalonNetwork`，在独立临时端口启动全新 NestJS 应用，依次验证登录、加入房间、准备、游戏开始、身份下发和阶段切换。成功时会输出 `PASS` 以及实际收到的路由序列；可反复运行，不会占用开发服务的 8888 房间。
 

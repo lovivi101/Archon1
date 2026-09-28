@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/commo
 import { WebSocket } from "ws";
 import { AvalonRoom, RoomConfig } from "./avalon.room";
 import { ErrorCode, RoomError, Route, Stage } from "./avalon.types";
+import { AuthService } from "./auth.service";
 import { DatabaseService } from "./database.service";
 import { encodePacket, Packet } from "./protocol";
 
@@ -9,7 +10,12 @@ export interface ClientConnection {
     socket: WebSocket;
     userId?: string;
     nickname?: string;
+    /** Timestamps of recent login attempts on this connection, for rate limiting. */
+    loginAttempts?: number[];
 }
+
+const loginWindowMs = 60_000;
+const maxLoginAttempts = 10;
 
 export const DEFAULT_ROOM_ID = "888";
 const roomIdPattern = /^[A-Za-z0-9_-]{1,32}$/;
@@ -51,7 +57,7 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     private sequence = 0;
     private timer?: NodeJS.Timeout;
 
-    public constructor(private readonly database: DatabaseService) {}
+    public constructor(private readonly database: DatabaseService, private readonly auth: AuthService) {}
 
     public onModuleInit(): void {
         this.timer = setInterval(() => this.tick(), this.config.tickMs);
@@ -154,10 +160,14 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     }
 
     private async handleLogin(client: ClientConnection, payload: Record<string, any>): Promise<void> {
-        const userId = normalizeUserId(payload.userId ?? payload.UID ?? payload.uid);
-        const nickname = String(payload.nickname ?? "Guest").trim() || "Guest";
-        if (userId.length > 128 || nickname.length > 64) throw new RoomError(ErrorCode.BadRequest, "用户 ID 或昵称过长");
-        if (userId.startsWith("ai-")) throw new RoomError(ErrorCode.Conflict, "用户 ID 已由 AI 使用");
+        const now = Date.now();
+        client.loginAttempts = (client.loginAttempts ?? []).filter((time) => now - time < loginWindowMs);
+        if (client.loginAttempts.length >= maxLoginAttempts) throw new RoomError(ErrorCode.TooManyRequests, "登录过于频繁，请稍后再试");
+        client.loginAttempts.push(now);
+
+        const nickname = String(payload.nickname ?? "").trim() || "Guest";
+        if (nickname.length > 64) throw new RoomError(ErrorCode.BadRequest, "昵称过长");
+        const { userId, provider } = await this.auth.authenticate(payload);
         try {
             await this.database.saveProfile(userId, nickname);
         } catch (error) {
@@ -167,11 +177,13 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         // Switching identity on the same socket releases the old one as if it had disconnected.
         if (client.userId && client.userId !== userId) this.disconnect(client);
         const previous = this.clients.get(userId);
-        if (previous && previous.socket !== client.socket) previous.socket.close();
+        if (previous && previous.socket !== client.socket) previous.socket.close(4001, "Logged in elsewhere");
         client.userId = userId;
         client.nickname = nickname;
         this.clients.set(userId, client);
-        this.send(client, Route.Login, { code: 0, userId });
+        const { token, expiresAt } = this.auth.issueToken(userId);
+        this.logger.log({ event: "auth.login", provider });
+        this.send(client, Route.Login, { code: 0, userId, nickname, provider, token, expiresAt });
     }
 
     private handleJoinRoom(client: ClientConnection, userId: string, payload: Record<string, any>): void {
@@ -281,7 +293,3 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     }
 }
 
-function normalizeUserId(value: unknown): string {
-    const text = String(value ?? "").trim();
-    return text || `guest-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
-}
