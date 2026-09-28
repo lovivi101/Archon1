@@ -95,11 +95,48 @@ func _notice(message: String) -> void:
 	if is_instance_valid(status):
 		status.text = message
 
-func save_share_card() -> void:
-	await RenderingServer.frame_post_draw
-	var target := "user://avalon-share.png"
-	var result := get_viewport().get_texture().get_image().save_png(target)
-	_notice("分享图已保存：%s" % ProjectSettings.globalize_path(target) if result == OK else "保存分享图失败")
+## Draws the result card for the finished game (or the open server replay), saves it and shows a preview
+## with the platform's share button. The preview sits above the page layer, so rebuilds keep it.
+func share_result() -> void:
+	var share: AvalonShare = AvalonApp.share
+	var data := AvalonShare.card_data(AvalonApp.model)
+	var image: Image = await share.render_card(data)
+	if image == null or image.is_empty():
+		_notice("无法生成分享图，战绩文字已复制")
+		share.copy_text(AvalonShare.card_text(data))
+		return
+	close_share_preview()
+	var saved := share.save_card(image)
+	var overlay := Control.new()
+	overlay.name = "SharePreview"
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(overlay)
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.85)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.add_child(dim)
+	var preview := TextureRect.new()
+	preview.texture = ImageTexture.create_from_image(image)
+	preview.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	preview.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	preview.position = Vector2(105, 90)
+	preview.size = Vector2(540, 720)
+	overlay.add_child(preview)
+	var page_layer := layer
+	layer = overlay
+	var hint := text_label("分享图已保存：%s" % saved if not saved.is_empty() else "分享图未能保存到文件", 60, 830, 630, 80, 17)
+	button(share.share_label(), 90, 930, 280, func():
+		var rect := get_viewport().get_final_transform() * preview.get_global_rect()
+		hint.text = share.share_card(image, data, rect, saved))
+	button("关闭", 380, 930, 280, close_share_preview, "button_secondary_dark")
+	layer = page_layer
+
+func close_share_preview() -> void:
+	var overlay := get_node_or_null("SharePreview")
+	if overlay != null:
+		overlay.name = "SharePreviewClosing"
+		overlay.queue_free()
 
 # ---- building blocks ----
 
@@ -494,13 +531,19 @@ func build_page() -> void:
 			button("快速匹配", 145, 555, 460, func(): controller.quick_match(field_text("url"), controller.lobby_count))
 			button("创建房间", 190, 665, 370, func(): controller.create_room(field_text("url"), controller.lobby_count), "button_secondary_dark")
 			text_label("加入好友的房间", 90, 780, 570, 40, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			line_edit("code", "", "输入 6 位房间号", 90, 828, 360, 56)
+			line_edit("code", controller.invite_code, "输入 6 位房间号", 90, 828, 250, 56)
+			chip("粘贴", 352, 826, 106, 60, func():
+				var pasted := controller.paste_invite()
+				if not pasted.is_empty():
+					(inputs["code"] as LineEdit).text = pasted)
 			chip("加入", 470, 826, 190, 60, func(): controller.join_room_code(field_text("url"), field_text("code")))
 			button("返回主界面", 220, 1000, 310, func(): controller.show_page(2), "button_secondary_dark")
 			state_line("连接状态：%s" % model.connection)
 		4:
 			header("房间 " + model.room_id, "%d人局 · %s" % [model.target_players, "公开匹配" if model.is_public else ("私人房间" if model.mode != "local_demo" else "本地练习")])
 			seats()
+			if model.mode == "network":
+				chip("邀请好友", 545, 165, 170, 52, controller.share_invite)
 			dark_panel(80, 790, 590, 400)
 			var ready_count := model.players.filter(func(p): return bool(p.get("isReady", false))).size()
 			var seat_total := model.target_players if model.mode != "local_demo" else model.players.size()
@@ -513,7 +556,7 @@ func build_page() -> void:
 			if model.mode == "local_demo":
 				state_line("本地对局：其余席位由 AI 控制")
 			elif not model.is_public:
-				state_line("把房间号 %s 发给好友，一起加入" % model.room_id)
+				state_line("点“邀请好友”把房间号 %s 发给好友" % model.room_id)
 			else:
 				state_line("等待其他玩家加入并准备")
 		5:
@@ -675,6 +718,8 @@ func build_page() -> void:
 				var delta := int(model.last_rating.get("delta", 0))
 				text_label("段位分 %s%d → %d（%s）" % ["+" if delta >= 0 else "", delta, int(model.last_rating.get("rating", 0)), model.last_rating.get("tier", "")], 90, 1010, 570, 40, 20, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 			button("查看复盘", 60, 1070, 200, func(): controller.show_final_replay())
+			chip("分享战绩", 250, 1170, 250, 56, share_result)
+			state_line("")
 			button("再来一局", 275, 1070, 200, func(): controller.play_again())
 			button("主界面", 490, 1070, 200, func(): controller.leave_room(), "button_secondary_dark")
 		14:
@@ -683,7 +728,8 @@ func build_page() -> void:
 			art("panel_content_large", 100, 225, 550)
 			if from_server:
 				scroll_lines(record_lines(model.replay), 145, 290, 470, 760)
-				button("返回战绩", 245, 1080, 260, func(): controller.board_tab = "history"; controller.open_leaderboard(), "button_secondary_dark")
+				button("分享战绩", 100, 1080, 270, share_result)
+				button("返回战绩", 390, 1080, 270, func(): controller.board_tab = "history"; controller.open_leaderboard(), "button_secondary_dark")
 			else:
 				var fr: Dictionary = model.final_result if not model.final_result.is_empty() else model.snapshot()
 				var results: Array = fr.get("results", [])
@@ -691,7 +737,7 @@ func build_page() -> void:
 				for event in Array(fr.get("history", [])).filter(func(event): return int(event.get("route", 0)) in [402, 502, 602, 903, 906, 702]):
 					lines.append(history_text(event))
 				scroll_lines(lines, 145, 290, 470, 760)
-				button("保存分享图", 100, 1080, 270, save_share_card)
+				button("分享战绩", 100, 1080, 270, share_result)
 				button("返回结算", 390, 1080, 270, func(): controller.show_page(13), "button_secondary_dark")
 			state_line("拖动列表查看全部记录")
 		15:

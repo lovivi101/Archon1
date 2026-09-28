@@ -12,6 +12,10 @@ var local_game: Node
 var profile: RefCounted
 ## Set by the app root; toggles the audio buses from the settings page.
 var audio: Node
+## AvalonShare (set by the app root, like audio); null in tools that do not need it.
+var share: Node
+## Room code the game was launched with (share card, web link); offered after login.
+var invite_code := ""
 var page := 1
 var resume_page := 2
 var auto_demo := false
@@ -83,11 +87,13 @@ func login(provider: String) -> void:
 		model.mode = "local_demo"
 		model.session = "logged_in"
 		show_page(2)
-		return
-	if provider == "wechat":
+	elif provider == "wechat":
 		model.mode = "network"
 		show_page(2)
 		notice.emit("桌面版无微信授权；请在主界面选择连接服务器或本地练习")
+	if not invite_code.is_empty():
+		show_page(3)
+		notice.emit("收到房间 %s 的邀请，点击“加入”即可进入" % invite_code)
 
 func create_local_room(count := 5, seed_value := -1) -> void:
 	manual_close = true
@@ -151,12 +157,31 @@ func quick_match(url: String, count: int) -> void:
 func create_room(url: String, count: int) -> void:
 	connect_server(url, {"type": "create", "count": count})
 
+## Accepts a bare room code or a whole pasted invite message.
 func join_room_code(url: String, code: String) -> void:
-	var room_code := code.strip_edges()
+	var room_code := AvalonShare.extract_room_code(code)
+	if room_code.is_empty():
+		room_code = code.strip_edges()
 	if room_code.is_empty():
 		notice.emit("请输入房间号")
 		return
+	invite_code = ""
 	connect_server(url, {"type": "join", "roomId": room_code})
+
+## Room code from the clipboard (a code or an invite message), or "" with a notice.
+func paste_invite() -> String:
+	var code := AvalonShare.extract_room_code(share.paste_text()) if share != null else ""
+	if code.is_empty():
+		notice.emit("剪贴板里没有 6 位房间号")
+	return code
+
+## Sends the current room's invite (share sheet, WeChat card or clipboard, per platform).
+func share_invite() -> void:
+	if model.mode != "network" or model.room_id.is_empty():
+		notice.emit("本地练习不能邀请好友，请先创建联机房间")
+		return
+	if share != null:
+		notice.emit(share.share_invite(model.room_id, model.target_players, T.rules_text(model.target_players)))
 
 func _enter_room() -> void:
 	match str(pending_entry.get("type", "")):
@@ -185,6 +210,8 @@ func leave_room() -> void:
 		model.session = "logged_in"
 	auto_join = false
 	model.reset()
+	if share != null:
+		share.set_share_target(AvalonShare.TITLE)
 	show_page(2)
 
 ## "Play again" from the results page: online, a Ready resets the finished room (or readies in the new lobby).
@@ -420,6 +447,8 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 					network.send(T.Route.LEADERBOARD, {"limit": 50})
 					network.send(T.Route.MATCH_HISTORY, {"limit": 30})
 		T.Route.JOIN_ROOM:
+			if share != null:
+				share.set_share_target("%d 人局等你来，房间号 %s" % [model.target_players, model.room_id], model.room_id)
 			show_page(4)
 		T.Route.GAME_START:
 			team_choice.clear()
