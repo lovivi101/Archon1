@@ -5,6 +5,7 @@ import { HealthController } from "./health.controller";
 import { DatabaseService } from "./database.service";
 import { AuthService } from "./auth.service";
 import { RecordsService } from "./records.service";
+import { SocialService } from "./social.service";
 
-@Module({ controllers: [HealthController], providers: [DatabaseService, AuthService, RecordsService, AvalonGameService, AvalonGateway] })
+@Module({ controllers: [HealthController], providers: [DatabaseService, AuthService, RecordsService, SocialService, AvalonGameService, AvalonGateway] })
 export class AppModule {}

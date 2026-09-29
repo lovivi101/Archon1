@@ -4,6 +4,7 @@ import { AvalonRoom, RoomConfig } from "./avalon.room";
 import { ErrorCode, RoomError, Route, Stage } from "./avalon.types";
 import { AuthService } from "./auth.service";
 import { RecordsService, tierFor } from "./records.service";
+import { PlayerCard, SocialService } from "./social.service";
 import { DatabaseService } from "./database.service";
 import { encodePacket, Packet } from "./protocol";
 
@@ -62,7 +63,12 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
     private sequence = 0;
     private timer?: NodeJS.Timeout;
 
-    public constructor(private readonly database: DatabaseService, private readonly auth: AuthService, private readonly records: RecordsService) {}
+    public constructor(
+        private readonly database: DatabaseService,
+        private readonly auth: AuthService,
+        private readonly records: RecordsService,
+        private readonly social: SocialService,
+    ) {}
 
     public onModuleInit(): void {
         this.timer = setInterval(() => this.tick(), this.config.tickMs);
@@ -81,6 +87,7 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         const userId = client.userId;
         if (!userId || this.clients.get(userId)?.socket !== client.socket) return;
         this.clients.delete(userId);
+        this.notifyFriends(userId, client.nickname ?? "", "offline");
         const room = this.roomOf(userId);
         if (!room) return;
         room.setOffline(userId);
@@ -136,6 +143,16 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
                     break;
                 case Route.MyStats:
                     this.send(client, Route.MyStats, { code: 0, ...(await this.stored(() => this.records.stats(userId))) });
+                    break;
+                case Route.FriendList:
+                case Route.FriendSearch:
+                case Route.FriendRequest:
+                case Route.FriendReply:
+                case Route.FriendRemove:
+                case Route.DirectChat:
+                case Route.DirectHistory:
+                case Route.RoomInvite:
+                    await this.handleSocial(client, userId, packet.route, payload);
                     break;
                 case Route.Ready:
                     this.handleReady(userId, payload);
@@ -219,9 +236,12 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         if (client.userId && client.userId !== userId) this.disconnect(client);
         const previous = this.clients.get(userId);
         if (previous && previous.socket !== client.socket) previous.socket.close(4001, "Logged in elsewhere");
+        const wasOnline = this.clients.has(userId);
         client.userId = userId;
         client.nickname = nickname;
         this.clients.set(userId, client);
+        this.social.remember(userId, nickname);
+        if (!wasOnline) this.notifyFriends(userId, nickname, "online");
         const { token, expiresAt } = this.auth.issueToken(userId);
         this.logger.log({ event: "auth.login", provider });
         this.send(client, Route.Login, { code: 0, userId, nickname, provider, token, expiresAt });
@@ -275,6 +295,7 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
             throw error;
         }
         client.nickname = nickname;
+        this.social.remember(userId, nickname, avatar || undefined);
 
         this.send(client, Route.JoinRoom, { code: 0, room: room.snapshot() });
         if (room.stage === Stage.End) {
@@ -288,6 +309,98 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
             for (const entry of room.chatFor(userId)) this.send(client, Route.ChatMessage, { ...entry, history: true });
         }
         room.broadcastRoom(Route.PlayerJoin);
+    }
+
+    private async handleSocial(client: ClientConnection, userId: string, route: Route, payload: Record<string, any>): Promise<void> {
+        const nickname = client.nickname ?? userId;
+        switch (route) {
+            case Route.FriendList: {
+                const lists = await this.socially(() => this.social.lists(userId));
+                this.send(client, route, {
+                    code: 0, friends: lists.friends.map((card) => this.presence(card)),
+                    incoming: lists.incoming.map((card) => this.presence(card)), outgoing: lists.outgoing.map((card) => this.presence(card)),
+                });
+                break;
+            }
+            case Route.FriendSearch: {
+                const players = await this.socially(() => this.social.search(userId, payload.query));
+                this.send(client, route, { code: 0, players: players.map((card) => ({ ...card, ...this.presence(card) })) });
+                break;
+            }
+            case Route.FriendRequest: {
+                const targetId = String(payload.targetId ?? "");
+                const { accepted } = await this.socially(() => this.social.request(userId, targetId));
+                this.send(client, route, { code: 0, targetId, accepted });
+                this.pushTo(targetId, Route.FriendUpdate, { kind: accepted ? "accepted" : "request", userId, nickname });
+                break;
+            }
+            case Route.FriendReply: {
+                const requesterId = String(payload.requesterId ?? "");
+                const accept = payload.accept === true;
+                await this.socially(() => this.social.reply(userId, requesterId, accept));
+                this.send(client, route, { code: 0, requesterId, accept });
+                if (accept) this.pushTo(requesterId, Route.FriendUpdate, { kind: "accepted", userId, nickname });
+                break;
+            }
+            case Route.FriendRemove: {
+                const targetId = String(payload.targetId ?? "");
+                await this.socially(() => this.social.remove(userId, targetId));
+                this.send(client, route, { code: 0, targetId });
+                this.pushTo(targetId, Route.FriendUpdate, { kind: "removed", userId, nickname });
+                break;
+            }
+            case Route.DirectChat: {
+                const message = await this.socially(() => this.social.send(userId, payload.targetId, payload.text));
+                this.send(client, route, { code: 0, message });
+                this.pushTo(message.targetId, Route.DirectMessage, { ...message, nickname });
+                break;
+            }
+            case Route.DirectHistory: {
+                const targetId = String(payload.targetId ?? "");
+                const messages = await this.socially(() => this.social.messages(userId, targetId));
+                this.send(client, route, { code: 0, targetId, messages });
+                break;
+            }
+            case Route.RoomInvite: {
+                const targetId = String(payload.targetId ?? "");
+                const room = this.requireRoom(userId);
+                if (room.isInGame()) throw new RoomError(ErrorCode.Conflict, "对局已经开始，结束后再邀请");
+                if (!room.hasFreeSeat()) throw new RoomError(ErrorCode.Conflict, "房间已满");
+                if (!(await this.socially(() => this.social.areFriends(userId, targetId)))) throw new RoomError(ErrorCode.Forbidden, "只能邀请好友");
+                if (!this.clients.has(targetId)) throw new RoomError(ErrorCode.NotFound, "好友不在线");
+                if (this.userRooms.get(targetId) === room.id) throw new RoomError(ErrorCode.Conflict, "好友已经在这个房间里");
+                this.pushTo(targetId, Route.RoomInvitePush, { fromId: userId, nickname, roomId: room.id, playerCount: room.targetPlayers });
+                this.send(client, route, { code: 0, targetId });
+                break;
+            }
+        }
+    }
+
+    /** Social storage trouble becomes a 503 for this request; rule errors (not a friend, limits) pass through. */
+    private async socially<T>(operation: () => Promise<T>): Promise<T> {
+        try {
+            return await operation();
+        } catch (error) {
+            if (error instanceof RoomError) throw error;
+            this.logger.error({ event: "social.failed", error: String(error) });
+            throw new RoomError(ErrorCode.Unavailable, "好友服务暂不可用");
+        }
+    }
+
+    private presence(card: PlayerCard): PlayerCard & { online: boolean; roomId: string } {
+        return { ...card, online: this.clients.has(card.userId), roomId: this.userRooms.get(card.userId) ?? "" };
+    }
+
+    private pushTo(userId: string, route: Route, payload: unknown): void {
+        const client = this.clients.get(userId);
+        if (client) this.send(client, route, payload);
+    }
+
+    /** Tells a player's online friends that they came online or went offline. */
+    private notifyFriends(userId: string, nickname: string, kind: "online" | "offline"): void {
+        this.social.friendIds(userId).then((ids) => {
+            for (const id of ids) this.pushTo(id, Route.FriendUpdate, { kind, userId, nickname });
+        }).catch((error: unknown) => this.logger.error({ event: "social.notify_failed", error: String(error) }));
     }
 
     private handleReady(userId: string, payload: Record<string, any>): void {

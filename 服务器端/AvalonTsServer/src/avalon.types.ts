@@ -45,6 +45,28 @@ export enum Route {
     MyStats = 1004,
     /** Pushed after each game: `{ matchId, rating, delta, tier, games, wins }`. */
     RatingUpdate = 1005,
+    /** Friends and pending requests: `{}` -> `{ friends, incoming, outgoing }`, entries `{ userId, nickname, avatar, online, roomId }`. */
+    FriendList = 1101,
+    /** Players by nickname or id: `{ query }` -> `{ players }`; entries also carry `isFriend` and `pending`. */
+    FriendSearch = 1102,
+    /** `{ targetId }` -> `{ targetId, accepted }`; accepted is true when the target had already asked us. */
+    FriendRequest = 1103,
+    /** `{ requesterId, accept }` -> `{ requesterId, accept }`. */
+    FriendReply = 1104,
+    /** `{ targetId }` -> `{ targetId }`. */
+    FriendRemove = 1105,
+    /** Pushed when the friend list changes: `{ kind: "request"|"accepted"|"removed"|"online"|"offline", userId, nickname }`. */
+    FriendUpdate = 1106,
+    /** Private message to a friend: `{ targetId, text }` -> `{ message }`; the friend also gets DirectMessage. */
+    DirectChat = 1107,
+    /** Pushed private message: `{ senderId, targetId, nickname, text, time }`. */
+    DirectMessage = 1108,
+    /** Recent private messages with a friend: `{ targetId }` -> `{ targetId, messages }`. */
+    DirectHistory = 1109,
+    /** Invites an online friend to my room: `{ targetId }` -> `{ targetId }`; the friend gets RoomInvitePush. */
+    RoomInvite = 1110,
+    /** `{ fromId, nickname, roomId, playerCount }`. */
+    RoomInvitePush = 1111,
 }
 
 export enum Role {

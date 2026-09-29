@@ -99,7 +99,7 @@ func _page_signature() -> String:
 	snapshot.erase("seconds_left")
 	var controller: AvalonController = AvalonApp.controller
 	return JSON.stringify([snapshot, controller.team_choice, controller.last_notice, controller.last_result_route, controller.lobby_count, controller.board_tab,
-		controller.excalibur_choice, controller.avatar_choice, AvalonApp.profile.data.get("muted", false),
+		controller.excalibur_choice, controller.avatar_choice, controller.friends_tab, AvalonApp.model.social_snapshot(), AvalonApp.profile.data.get("muted", false),
 		AvalonApp.profile.data.get("music_on", true), AvalonApp.profile.data.get("sfx_on", true),
 		AvalonApp.profile.data.friends.size(), AvalonApp.profile.data.matches.size()])
 
@@ -259,7 +259,7 @@ func header(title: String, subtitle := "") -> void:
 		back.position = Vector2(31, 38)
 		back.size = Vector2(60, 70)
 		back.add_theme_font_size_override("font_size", 48)
-		back.pressed.connect(func(): AvalonApp.controller.show_page(2 if page_id in [3,15,16,18] else AvalonApp.controller.resume_page))
+		back.pressed.connect(_back)
 		layer.add_child(back)
 	if page_id in [5, 6, 7, 8, 9, 10, 11, 12, 17] and AvalonApp.model.stage != T.Stage.END:
 		var leave := Button.new()
@@ -271,6 +271,16 @@ func header(title: String, subtitle := "") -> void:
 		leave.add_theme_color_override("font_color", Color(0.85, 0.75, 0.6))
 		leave.pressed.connect(func(): AvalonApp.controller.exit_game())
 		layer.add_child(leave)
+
+## Header "‹": a private chat goes back to the friend list; the friends page opened from a room goes back to it.
+func _back() -> void:
+	var controller: AvalonController = AvalonApp.controller
+	if page_id == 16 and not AvalonApp.model.dm_target.is_empty():
+		controller.close_direct()
+	elif page_id == 16 and AvalonApp.model.session == "in_room":
+		controller.show_page(controller.resume_page)
+	else:
+		controller.show_page(2 if page_id in [3, 15, 16, 18] else controller.resume_page)
 
 ## Bottom status text; a recent notice (e.g. a server error) takes precedence over the page's default hint.
 func state_line(message: String) -> void:
@@ -323,6 +333,8 @@ func nav() -> void:
 		b.size = Vector2(125, 105)
 		if int(item[1]) == 15:
 			b.pressed.connect(AvalonApp.controller.open_leaderboard)
+		elif int(item[1]) == 16:
+			b.pressed.connect(AvalonApp.controller.open_friends.bind(""))
 		else:
 			b.pressed.connect(AvalonApp.controller.show_page.bind(int(item[1])))
 		layer.add_child(b)
@@ -531,6 +543,159 @@ func scroll_lines(lines: Array, x: float, y: float, width: float, height: float,
 	layer.add_child(scroll)
 	return scroll
 
+## Friends page: friend list with presence, requests, player search and a friend's room invite.
+func friends_page() -> void:
+	var model: AvalonModel = AvalonApp.model
+	var controller: AvalonController = AvalonApp.controller
+	if not controller.is_online():
+		header("好友")
+		art("panel_content_large", 103, 225, 545)
+		text_label("连接服务器后可以添加好友、私聊，\n并邀请在线好友进入你的房间", 150, 480, 450, 110, 22)
+		button("连接服务器", 195, 640, 360, func(): controller.connect_for_friends())
+		nav()
+		state_line("好友关系保存在服务器上")
+		return
+	var online_count := model.friends.filter(func(f): return bool(f.get("online", false))).size()
+	header("好友", "%d 位在线 · 共 %d 位" % [online_count, model.friends.size()])
+	var top := 175.0
+	if not model.room_invite.is_empty():
+		var invite: Dictionary = model.room_invite
+		strip(top, 64)
+		text_label("%s 邀请你加入 %d 人局（房间 %s）" % [str(invite.get("nickname", "好友")).left(8), int(invite.get("playerCount", 5)), invite.get("roomId", "")], 55, top + 4, 400, 56, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+		chip("加入", 465, top + 6, 110, 52, controller.accept_room_invite)
+		chip("忽略", 585, top + 6, 110, 52, controller.dismiss_room_invite)
+		top += 74
+	var request_label := "申请 %d" % model.friend_incoming.size() if not model.friend_incoming.is_empty() else "申请"
+	var tabs := [["好友 %d" % model.friends.size(), "friends"], [request_label, "requests"], ["找人", "search"]]
+	for i in tabs.size():
+		var key: String = tabs[i][1]
+		chip(tabs[i][0], 95 + i * 190, top + 5, 175, 56, func(): controller.friends_tab = key; _refresh(), controller.friends_tab == key)
+	top += 75
+	var rows: Array = []
+	match controller.friends_tab:
+		"requests":
+			for entry in model.friend_incoming:
+				var id := str(entry.userId)
+				rows.append([entry, "请求添加你为好友", [["同意", controller.reply_friend.bind(id, true)], ["拒绝", controller.reply_friend.bind(id, false)]]])
+			for entry in model.friend_outgoing:
+				rows.append([entry, "等待对方同意", []])
+			if rows.is_empty():
+				text_label("没有待处理的好友申请", 130, top + 150, 490, 60, 21)
+		"search":
+			line_edit("friend_query", "", "输入玩家昵称或 ID", 105, top, 390, 58)
+			chip("搜索", 510, top, 135, 60, func(): controller.search_players(field_text("friend_query")))
+			top += 75
+			for entry in model.friend_search:
+				var id := str(entry.userId)
+				var actions: Array = []
+				var state := presence_text(entry)
+				if bool(entry.get("isFriend", false)):
+					state = "已是好友"
+				elif bool(entry.get("pending", false)):
+					state = "已申请，等待对方同意"
+				else:
+					actions.append(["添加", controller.request_friend.bind(id)])
+				rows.append([entry, state, actions])
+			if rows.is_empty():
+				text_label("按昵称搜索玩家，或输入对方的 ID", 130, top + 120, 490, 60, 21)
+		_:
+			var sorted: Array = model.friends.duplicate()
+			sorted.sort_custom(func(a, b): return bool(a.get("online", false)) and not bool(b.get("online", false)))
+			var can_invite := model.mode == "network" and model.session == "in_room" and model.stage == T.Stage.PREPARING
+			for entry in sorted:
+				var id := str(entry.userId)
+				var actions: Array = [["私聊•" if id in model.dm_unread else "私聊", controller.open_direct.bind(id)]]
+				if can_invite and bool(entry.get("online", false)) and str(entry.get("roomId", "")) != model.room_id:
+					actions.append(["邀请", controller.invite_friend.bind(id)])
+				actions.append(["删除", controller.remove_friend.bind(id)])
+				rows.append([entry, presence_text(entry), actions])
+			if rows.is_empty():
+				text_label("还没有好友，去“找人”添加吧", 130, top + 150, 490, 60, 21)
+	friend_rows(rows, top, 1140 - top)
+	nav()
+	state_line("在房间里时，可以邀请在线好友加入" if model.session == "in_room" else "进入联机房间后，可以邀请在线好友加入")
+
+func presence_text(entry: Dictionary) -> String:
+	if not bool(entry.get("online", false)):
+		return "离线"
+	var room := str(entry.get("roomId", ""))
+	return "在线 · 房间 %s" % room if not room.is_empty() else "在线"
+
+## Scrolling player rows: [entry, status text, [[button text, Callable], ...]].
+func friend_rows(rows: Array, top: float, height: float) -> void:
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(95, top)
+	scroll.size = Vector2(560, height)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	for row in rows:
+		var entry: Dictionary = row[0]
+		var online := bool(entry.get("online", false))
+		var item := Panel.new()
+		item.custom_minimum_size = Vector2(544, 78)
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.025, 0.04, 0.06, 0.92)
+		style.border_color = Color(0.51, 0.4, 0.24) if online else Color(0.3, 0.27, 0.22)
+		style.set_border_width_all(2)
+		style.set_corner_radius_all(8)
+		item.add_theme_stylebox_override("panel", style)
+		var avatar := str(entry.get("avatar", ""))
+		art(avatar if avatar in AvalonController.AVATARS else "avatar-player-knight", 8, 7, 64, item)
+		var name := Label.new()
+		name.text = str(entry.get("nickname", entry.get("userId", ""))).left(10)
+		name.position = Vector2(82, 6)
+		name.size = Vector2(200, 36)
+		name.add_theme_font_size_override("font_size", 21)
+		name.add_theme_color_override("font_color", Color(0.95, 0.9, 0.78))
+		item.add_child(name)
+		var state := Label.new()
+		state.text = str(row[1])
+		state.position = Vector2(82, 40)
+		state.size = Vector2(250, 30)
+		state.add_theme_font_size_override("font_size", 16)
+		state.add_theme_color_override("font_color", Color(0.6, 0.9, 0.6) if online else Color(0.65, 0.62, 0.55))
+		item.add_child(state)
+		var actions: Array = row[2]
+		for i in actions.size():
+			var action := Button.new()
+			action.text = str(actions[i][0])
+			action.position = Vector2(544 - (actions.size() - i) * 86, 14)
+			action.size = Vector2(78, 50)
+			action.add_theme_font_size_override("font_size", 19)
+			action.add_theme_color_override("font_color", RED if actions[i][0] == "删除" else GOLD)
+			action.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
+			action.pressed.connect(actions[i][1])
+			item.add_child(action)
+		box.add_child(item)
+	scroll.add_child(box)
+	layer.add_child(scroll)
+
+## Private messages with one friend.
+func direct_page() -> void:
+	var model: AvalonModel = AvalonApp.model
+	var controller: AvalonController = AvalonApp.controller
+	var friend: Dictionary = {}
+	for entry in model.friends:
+		if str(entry.userId) == model.dm_target:
+			friend = entry
+	var friend_name := str(friend.get("nickname", model.dm_target)).left(10)
+	header("私聊 · " + friend_name, presence_text(friend))
+	dark_panel(60, 175, 630, 850)
+	var lines: Array = []
+	for message in model.dm_messages:
+		var mine := str(message.get("senderId", "")) == model.user_id
+		lines.append(["%s：%s" % ["我" if mine else friend_name, message.get("text", "")], GOLD if mine else Color(0.95, 0.9, 0.78)])
+	if lines.is_empty():
+		lines = [["还没有消息，打个招呼吧", Color(0.65, 0.62, 0.55)]]
+	pinned_scrolls.append(scroll_lines(lines, 85, 195, 580, 810, 20))
+	line_edit("direct", "", "输入私信（最多 200 字）", 60, 1045, 470, 60)
+	chip("发送", 545, 1045, 145, 62, func():
+		if controller.send_direct(field_text("direct")):
+			(inputs["direct"] as LineEdit).text = "")
+	button("返回好友列表", 220, 1130, 310, controller.close_direct, "button_secondary_dark")
+	state_line("私信只有你们两人能看到")
+
 ## Timeline of a stored match (server replay): roles, then every proposal, mission and Lady check.
 func record_lines(record: Dictionary) -> Array:
 	var roster: Array = record.get("players", [])
@@ -655,6 +820,7 @@ func build_page() -> void:
 			header("房间 " + model.room_id, "%d人局 · %s" % [model.target_players, "公开匹配" if model.is_public else ("私人房间" if model.mode != "local_demo" else "本地练习")])
 			seats()
 			if model.mode == "network":
+				chip("好友列表", 35, 180, 170, 52, controller.open_friends.bind("friends"))
 				chip("邀请好友", 545, 180, 170, 52, controller.share_invite)
 			dark_panel(80, 790, 590, 400)
 			var ready_count := model.players.filter(func(p): return bool(p.get("isReady", false))).size()
@@ -934,17 +1100,10 @@ func build_page() -> void:
 				scroll_lines(rows, 145, 310, 470, 750)
 			nav()
 		16:
-			header("好友", "本机联系人")
-			art("panel_content_large", 103, 225, 545)
-			line_edit("friend", search_text, "输入好友昵称", 140, 282, 330, 58)
-			chip("添加", 482, 281, 128, 60, func(): search_text = field_text("friend"); AvalonApp.profile.add_friend(search_text); _refresh())
-			var friends: Array = AvalonApp.profile.data.friends
-			for i in mini(9, friends.size()):
-				art("panel_list_row", 125, 375 + i * 78, 500)
-				text_label(str(friends[i]), 165, 388 + i * 78, 405, 50, 22, HORIZONTAL_ALIGNMENT_LEFT)
-			if friends.is_empty():
-				text_label("暂无好友，输入昵称添加本机联系人", 130, 520, 490, 90, 21)
-			nav()
+			if not model.dm_target.is_empty() and controller.is_online():
+				direct_page()
+			else:
+				friends_page()
 		17:
 			header("湖中仙女", "第 %d 轮任务后" % model.round)
 			progress()

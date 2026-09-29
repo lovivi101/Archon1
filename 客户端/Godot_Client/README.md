@@ -11,6 +11,7 @@ Godot 4.7.2 项目。运行 `Run-Game.cmd` 从登录页开始；`Open-Editor.cmd
 - 联机对局：阶段、队长、轮次和倒计时以服务端推送为准；服务端拒绝操作时会在底部显示原因，并允许重新投票或出牌。“退出房间”会通知服务端释放座位；结算页“再来一局”会让服务端把房间重置为新一局。
 - 排行页有三个标签：“全服排行”（服务端积分榜）、“我的战绩”（最近对局，点开可看服务端保存的完整复盘）、“本机记录”（本地练习的记录）。联机对局结束后结算页显示本局积分变化和段位。未连接服务器时，打开排行页会先用保存的令牌连服拉取数据，连不上则只显示本机记录。
 - 复盘：联机对局可看服务端完整复盘（身份、每次组队与投票、任务、湖中仙女、王者之剑）；本地练习是本局公开事件的规则摘要。
+- 好友（需连接服务器）：好友页有“好友 / 申请 / 找人”三个标签。按昵称或 ID 找人并申请，对方同意后成为好友；好友列表显示在线状态和所在房间，可私聊、删除（点两次确认）。在未开局的联机房间里（房间页左上“好友列表”）可以邀请在线好友，对方在好友页顶部看到邀请并一键加入。收到好友申请、私信、邀请时底部会提示。
 - 分享：联机房间可“邀请好友”（复制邀请文字，微信小游戏里直接发卡片），大厅可“粘贴”邀请取出房间号；结算页和复盘页“分享战绩”会生成战绩图并预览。各平台行为、微信接口和 Android 分享插件接口见 `docs/分享与邀请.md`。
 
 ## 游戏流程
@@ -34,7 +35,7 @@ Godot 4.7.2 项目。运行 `Run-Game.cmd` 从登录页开始；`Open-Editor.cmd
 | Controller | `scripts/controllers/avalon_controller.gd` | 页面流转和操作校验 |
 | 网络 | `scripts/network/` | WebSocket 与二进制协议 |
 | 本地规则 | `scripts/services/local_game.gd` | 离线对局与 AI 玩家（首任队长随机） |
-| 资料 | `scripts/services/profile_store.gd` | 本机用户、对局记录和好友 |
+| 资料 | `scripts/services/profile_store.gd` | 本机用户、对局记录 |
 | 分享 | `scripts/services/share_service.gd` | 邀请、战绩图、各平台分享接口 |
 | 声音 | `scripts/services/audio_service.gd` | 音效与音乐（素材清单见 `assets/audio/README.md`） |
 
@@ -51,6 +52,8 @@ Godot 4.7.2 项目。运行 `Run-Game.cmd` 从登录页开始；`Open-Editor.cmd
 Linux 下用 `Godot_v4.7.2-stable_linux.x86_64` 执行相同参数；没有显示器时第二条需要放在 `xvfb-run -a` 下运行。
 
 第二条命令会渲染 15 页、保存 `verification/page_*.png`，并模拟一整局。第三条核对身份、组队、投票结果、任务页面的流转。联机验证：先在 `服务器端/AvalonTsServer` 运行 `npm run build`，再以 `PORT=8899`、`AVALON_NIGHT_SECONDS=1`、`AVALON_AI_TICK_MS=75` 启动 `node dist/server.js`，然后运行 `tools/smoke_network.gd`（完整联机对局）和 `tools/smoke_lifecycle.gd`（再来一局、退出房间、被同账号顶号后不再重连）。
+
+`tools/smoke_friends.gd` 用一个真人客户端加一条原始连接在联机服务端上走完好友流程：搜索、申请、同意、双向私信、邀请进房、收到邀请、删除（加 `-- shots=目录` 保存好友页截图）。
 
 `tools/smoke_excalibur.gd` 让玩家座位在 10 人局里持有王者之剑时通过界面翻牌，检查私密结果和得知的阵营（随机自对局里玩家很少拿到剑）。`tools/capture_review.gd` 按 5/7/10 人局截取全部页面，供 UI 审查。
 

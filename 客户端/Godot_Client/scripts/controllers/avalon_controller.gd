@@ -41,6 +41,11 @@ var board_tab := "board"
 var excalibur_choice := -1
 ## Second tap on "退出对局" within this tick deadline confirms leaving.
 var exit_armed_until := 0
+## Friends page tab: "friends", "requests" or "search".
+var friends_tab := "friends"
+## Friend whose "删除" was tapped once; a second tap within three seconds removes them.
+var remove_armed := ""
+var remove_armed_until := 0
 
 func setup(next_model: AvalonModel, next_network: AvalonNetwork, demo: Node, store: RefCounted) -> void:
 	model = next_model
@@ -246,6 +251,84 @@ func connect_for_records() -> void:
 	connect_server(model.server_url, {"type": "none"})
 	show_page(15)
 
+## Friends page: fetch the lists from the server when connected.
+func open_friends(tab := "") -> void:
+	if not tab.is_empty():
+		friends_tab = tab
+	show_page(16)
+	if is_online():
+		network.send(T.Route.FRIEND_LIST, {})
+
+## Connects and logs in without joining a room, to manage friends.
+func connect_for_friends() -> void:
+	connect_server(model.server_url, {"type": "none"})
+	show_page(16)
+
+func search_players(query: String) -> void:
+	if query.strip_edges().is_empty():
+		notice.emit("请输入玩家昵称或 ID")
+		return
+	friends_tab = "search"
+	_social(T.Route.FRIEND_SEARCH, {"query": query.strip_edges()})
+
+func request_friend(user_id: String) -> void:
+	_social(T.Route.FRIEND_REQUEST, {"targetId": user_id})
+
+func reply_friend(user_id: String, accept: bool) -> void:
+	_social(T.Route.FRIEND_REPLY, {"requesterId": user_id, "accept": accept})
+
+## Needs a second tap within three seconds, like leaving a game.
+func remove_friend(user_id: String) -> void:
+	if remove_armed != user_id or Time.get_ticks_msec() > remove_armed_until:
+		remove_armed = user_id
+		remove_armed_until = Time.get_ticks_msec() + 3000
+		notice.emit("再点一次“删除”确认删除好友")
+		return
+	remove_armed = ""
+	_social(T.Route.FRIEND_REMOVE, {"targetId": user_id})
+
+func open_direct(user_id: String) -> void:
+	model.dm_target = user_id
+	model.dm_messages = []
+	model.dm_unread.erase(user_id)
+	_social(T.Route.DIRECT_HISTORY, {"targetId": user_id})
+	model.changed.emit()
+
+func close_direct() -> void:
+	model.dm_target = ""
+	model.dm_messages = []
+	model.changed.emit()
+
+func send_direct(text: String) -> bool:
+	var message := text.strip_edges()
+	if message.is_empty() or model.dm_target.is_empty():
+		return false
+	return _social(T.Route.DIRECT_CHAT, {"targetId": model.dm_target, "text": message})
+
+## Invites an online friend to the room I am in (before the game starts).
+func invite_friend(user_id: String) -> void:
+	if model.mode != "network" or model.session != "in_room":
+		notice.emit("先创建或加入联机房间，再邀请好友")
+		return
+	_social(T.Route.ROOM_INVITE, {"targetId": user_id})
+
+func accept_room_invite() -> void:
+	var room_id := str(model.room_invite.get("roomId", ""))
+	model.room_invite = {}
+	if not room_id.is_empty():
+		connect_server(model.server_url, {"type": "join", "roomId": room_id})
+
+func dismiss_room_invite() -> void:
+	model.room_invite = {}
+	model.changed.emit()
+
+## Friends need the server even while a local practice game is open.
+func _social(route: int, payload: Dictionary) -> bool:
+	if not is_online():
+		notice.emit("好友功能需要先连接服务器")
+		return false
+	return network.send(route, payload)
+
 ## Opens the full replay of a past match on the replay page.
 func open_match(match_id: int) -> void:
 	_send(T.Route.MATCH_DETAIL, {"matchId": match_id})
@@ -446,6 +529,7 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 				if page == 15:
 					network.send(T.Route.LEADERBOARD, {"limit": 50})
 					network.send(T.Route.MATCH_HISTORY, {"limit": 30})
+				network.send(T.Route.FRIEND_LIST, {})
 		T.Route.JOIN_ROOM:
 			if share != null:
 				share.set_share_target("%d 人局等你来，房间号 %s" % [model.target_players, model.room_id], model.room_id)
@@ -475,6 +559,35 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 			team_choice = model.selected_seats.duplicate()
 		T.Route.MATCH_DETAIL:
 			show_page(14)
+		T.Route.FRIEND_REQUEST:
+			notice.emit("已成为好友" if payload.get("accepted", false) else "好友申请已发送")
+			network.send(T.Route.FRIEND_LIST, {})
+			if friends_tab == "search":
+				friends_tab = "friends"
+		T.Route.FRIEND_REPLY:
+			notice.emit("已添加好友" if payload.get("accept", false) else "已拒绝申请")
+			network.send(T.Route.FRIEND_LIST, {})
+		T.Route.FRIEND_REMOVE:
+			if str(payload.get("targetId", "")) == model.dm_target:
+				close_direct()
+			notice.emit("已删除好友")
+			network.send(T.Route.FRIEND_LIST, {})
+		T.Route.FRIEND_UPDATE:
+			var who := str(payload.get("nickname", "好友"))
+			match str(payload.get("kind", "")):
+				"request": notice.emit("%s 请求添加你为好友" % who)
+				"accepted": notice.emit("%s 已成为你的好友" % who)
+				"removed":
+					if str(payload.get("userId", "")) == model.dm_target:
+						close_direct()
+			network.send(T.Route.FRIEND_LIST, {})
+		T.Route.DIRECT_MESSAGE:
+			if str(payload.get("senderId", "")) != model.dm_target or page != 16:
+				notice.emit("%s：%s" % [payload.get("nickname", "好友"), str(payload.get("text", "")).left(30)])
+		T.Route.ROOM_INVITE:
+			notice.emit("邀请已发送")
+		T.Route.ROOM_INVITE_PUSH:
+			notice.emit("%s 邀请你加入 %d 人局（房间 %s），到好友页接受" % [payload.get("nickname", "好友"), int(payload.get("playerCount", 5)), payload.get("roomId", "")])
 		T.Route.RATING_UPDATE:
 			var delta := int(payload.get("delta", 0))
 			notice.emit("段位分 %s%d（%s）" % ["+" if delta >= 0 else "", delta, payload.get("tier", "")])
