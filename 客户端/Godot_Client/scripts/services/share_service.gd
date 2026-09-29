@@ -134,7 +134,7 @@ static func card_data(model: AvalonModel) -> Dictionary:
 			data.date = Time.get_date_string_from_unix_time(int(float(record.endedAt) / 1000.0) + local_offset)
 	else:
 		var result: Dictionary = model.final_result if not model.final_result.is_empty() else model.snapshot()
-		data.good_win = bool(result.get("winner", false))
+		data.good_win = result.get("winner") == true
 		data.reason = str(result.get("reason", ""))
 		data.missions = Array(result.get("results", [])).map(func(ok): return bool(ok))
 		var me := int(result.get("me", -1))

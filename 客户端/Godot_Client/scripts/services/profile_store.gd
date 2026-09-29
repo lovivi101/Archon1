@@ -15,7 +15,9 @@ func save() -> void:
 	if file:
 		file.store_string(JSON.stringify(data,"\t"))
 func record(snapshot: Dictionary) -> void:
-	data.matches.push_front(snapshot.duplicate(true))
+	var entry := snapshot.duplicate(true)
+	entry.time = Time.get_datetime_string_from_system(false, true)
+	data.matches.push_front(entry)
 	if data.matches.size() > 30:
 		data.matches.resize(30)
 	save()

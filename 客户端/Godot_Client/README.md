@@ -52,6 +52,8 @@ Linux 下用 `Godot_v4.7.2-stable_linux.x86_64` 执行相同参数；没有显�
 
 第二条命令会渲染 15 页、保存 `verification/page_*.png`，并模拟一整局。第三条核对身份、组队、投票结果、任务页面的流转。联机验证：先在 `服务器端/AvalonTsServer` 运行 `npm run build`，再以 `PORT=8899`、`AVALON_NIGHT_SECONDS=1`、`AVALON_AI_TICK_MS=75` 启动 `node dist/server.js`，然后运行 `tools/smoke_network.gd`（完整联机对局）和 `tools/smoke_lifecycle.gd`（再来一局、退出房间、被同账号顶号后不再重连）。
 
+`tools/smoke_excalibur.gd` 让玩家座位在 10 人局里持有王者之剑时通过界面翻牌，检查私密结果和得知的阵营（随机自对局里玩家很少拿到剑）。`tools/capture_review.gd` 按 5/7/10 人局截取全部页面，供 UI 审查。
+
 `tools/smoke_share.gd -- room=654321` 验证邀请、粘贴、启动房间号和战绩图（需真实渲染，Linux 下用 `xvfb-run -a`）。
 
 `tools/smoke_selfplay.gd` 让一个随机行动的“真人”通过客户端打完整联机对局（随机发言、组队、投票、出牌，拿到湖中仙女或王者之剑就随机使用，是刺客就刺杀），其余座位由服务端 AI 填满；服务端拒绝合法操作、页面没跟上阶段、私密结果缺失或卡住都会报错。加上 `url=local` 则在本地练习模式下对战（不需要服务端）。联机时打完后还会检查战绩、积分推送、排行榜和复盘页。`tools/ai_balance.gd -- games=100` 统计本地 AI 纯 AI 对局的好人胜率，用来和服务端的平衡对照。用法：
