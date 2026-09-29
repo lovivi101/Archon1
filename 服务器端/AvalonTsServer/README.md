@@ -94,6 +94,7 @@ npm run dev
 | `AVALON_AI_DELAY_MS` | 同 `AVALON_AI_TICK_MS` | 每个阶段开始后 AI 等待多久再行动 |
 | `AVALON_MAX_ROOMS` | 1000 | 同时存在的房间上限 |
 | `AVALON_ABANDON_SECONDS` | 60 | 对局中无人在线多久后回收房间 |
+| `AVALON_HEARTBEAT_MS` | 30000 | 心跳间隔；连续一个间隔没有回应 ping 的连接会被断开（座位交给 AI 托管）。单个数据包最大 64 KB，超过会以 1009 关闭连接 |
 | `AVALON_TOKEN_SECRET` | 开发环境随机 | 登录令牌签名密钥，生产环境必填且不少于 32 个字符 |
 | `AVALON_TOKEN_TTL_DAYS` | 30 | 令牌有效天数 |
 | `AVALON_ALLOW_LEGACY_LOGIN` | 生产环境 0，其他 1 | 是否允许客户端自报 `userId` 登录 |

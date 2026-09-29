@@ -92,6 +92,7 @@ test.before(async () => {
             AVALON_NIGHT_SECONDS: "0.1", AVALON_PROPOSE_SECONDS: "0.3", AVALON_VOTE_SECONDS: "0.3",
             AVALON_MISSION_SECONDS: "0.3", AVALON_ASSASSIN_SECONDS: "0.3", AVALON_AI_TICK_MS: "20", AVALON_AI_DELAY_MS: "20",
             AVALON_SPEAK_SECONDS: "0.3", AVALON_LADY_SECONDS: "0.3", AVALON_EXCALIBUR_SECONDS: "0.3", AVALON_AI_SPEECH_MS: "20",
+            AVALON_HEARTBEAT_MS: "1000",
         },
         stdio: "ignore",
         windowsHide: true,
@@ -430,4 +431,23 @@ test("friends: search, request, accept, presence, private messages, room invite 
     ben.send(1101, {});
     assert.deepEqual((await ben.wait(1101, () => true, mark)).friends, []);
     ben.close();
+});
+
+test("oversized frames are refused and sockets that stop answering pings are dropped", async () => {
+    const big = await new Client().open();
+    const closed = new Promise((resolve) => big.socket.once("close", (code) => resolve(code)));
+    big.socket.send(Buffer.alloc(70000));
+    assert.equal(await closed, 1009);
+
+    const healthy = await new Client().open();
+    await healthy.login("heartbeat-ok");
+    const silent = new WebSocket(`ws://127.0.0.1:${port}`, { autoPong: false });
+    await new Promise((resolve, reject) => {
+        silent.once("open", resolve);
+        silent.once("error", reject);
+    });
+    const dropped = new Promise((resolve) => silent.once("close", (code) => resolve(code)));
+    assert.equal(await dropped, 1006, "terminated without a close frame");
+    assert.equal(healthy.socket.readyState, WebSocket.OPEN, "clients that answer pings stay connected");
+    healthy.close();
 });
