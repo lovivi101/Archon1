@@ -340,5 +340,83 @@
     0,
     750,
     1334
+  ],
+  "avatar-green-ranger": [
+    3,
+    2,
+    1206,
+    1276
+  ],
+  "avatar-loyal-male": [
+    15,
+    20,
+    1290,
+    1179
+  ],
+  "avatar-percival": [
+    2,
+    21,
+    1197,
+    1275
+  ],
+  "avatar-silver-queen": [
+    0,
+    23,
+    1145,
+    1351
+  ],
+  "add-friend-icon": [
+    204,
+    195,
+    898,
+    876
+  ],
+  "search-icon": [
+    114,
+    83,
+    1030,
+    1054
+  ],
+  "chat-icon": [
+    78,
+    150,
+    1098,
+    918
+  ],
+  "decor-laurel-medal": [
+    42,
+    61,
+    1240,
+    1067
+  ],
+  "button_small_action": [
+    52,
+    158,
+    1880,
+    455
+  ],
+  "tab_active_blue": [
+    43,
+    233,
+    1772,
+    354
+  ],
+  "tab_inactive_dark": [
+    73,
+    225,
+    1714,
+    369
+  ],
+  "panel_search_box": [
+    37,
+    226,
+    2099,
+    259
+  ],
+  "panel_bottom_nav": [
+    15,
+    267,
+    1954,
+    238
   ]
 }

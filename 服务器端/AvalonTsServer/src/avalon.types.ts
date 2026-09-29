@@ -39,13 +39,16 @@ export enum Route {
     MatchHistory = 1001,
     /** Full replay of a game I played: `{ matchId }` -> `{ match }`. */
     MatchDetail = 1002,
-    /** Top players by rating: `{ limit }` -> `{ top, me }`. */
+    /** Top players by rating: `{ limit, scope? }` -> `{ scope, top, me }`; scope "friends" ranks me and my friends only. */
     Leaderboard = 1003,
     /** My rating, tier, games, wins and rank. */
     MyStats = 1004,
     /** Pushed after each game: `{ matchId, rating, delta, tier, games, wins }`. */
     RatingUpdate = 1005,
-    /** Friends and pending requests: `{}` -> `{ friends, incoming, outgoing }`, entries `{ userId, nickname, avatar, online, roomId }`. */
+    /**
+     * Friends, pending requests and players from my recent games: `{}` -> `{ friends, incoming, outgoing, recent }`,
+     * entries `{ userId, nickname, avatar, online, roomId }`; recent entries also carry `isFriend` and `pending`.
+     */
     FriendList = 1101,
     /** Players by nickname or id: `{ query }` -> `{ players }`; entries also carry `isFriend` and `pending`. */
     FriendSearch = 1102,

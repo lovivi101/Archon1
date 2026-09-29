@@ -118,6 +118,16 @@ func run() -> void:
 	await shot("friends_invite")
 	controller.dismiss_room_invite()
 
+	controller.friends_tab = "recent"
+	await shot("friends_recent")
+	controller.board_tab = "friends"
+	controller.open_leaderboard()
+	await wait_for(func(): return false, 1.0)
+	await shot("board_friends")
+	controller.show_page(18)
+	await shot("settings")
+	controller.open_friends("friends")
+
 	controller.remove_friend(buddy_id)
 	controller.remove_friend(buddy_id)
 	if not await wait_for(func(): return not model.friends.any(func(e): return str(e.userId) == buddy_id) and not buddy_got(1106, func(p): return p.kind == "removed").is_empty()):

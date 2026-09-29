@@ -195,22 +195,48 @@ export class RecordsService {
         return result.rowCount ? { matchId, ...result.rows[0].record } : null;
     }
 
-    public async leaderboard(limit = 50): Promise<LeaderboardEntry[]> {
+    /** Top rated players; with `among`, only those players (a friends board), ranked among themselves. */
+    public async leaderboard(limit = 50, among?: string[]): Promise<LeaderboardEntry[]> {
         const pool = this.database.pool;
         let rows: { userId: string; nickname: string; avatar: string; rating: number; games: number; wins: number }[];
         if (!pool) {
-            rows = [...this.memory.profiles.entries()].filter(([, profile]) => profile.games > 0)
+            const allowed = among ? new Set(among) : null;
+            rows = [...this.memory.profiles.entries()].filter(([userId, profile]) => profile.games > 0 && (!allowed || allowed.has(userId)))
                 .map(([userId, profile]) => ({ userId, ...profile }))
                 .sort((a, b) => b.rating - a.rating || b.games - a.games).slice(0, limit);
         } else {
             const result = await pool.query(
                 `SELECT user_id, nickname, avatar, rating, games, wins FROM player_profiles
-                 WHERE games > 0 ORDER BY rating DESC, games DESC LIMIT $1`,
-                [limit],
+                 WHERE games > 0 AND ($2::text[] IS NULL OR user_id = ANY($2)) ORDER BY rating DESC, games DESC LIMIT $1`,
+                [limit, among ?? null],
             );
             rows = result.rows.map((row) => ({ userId: row.user_id, nickname: row.nickname, avatar: row.avatar, rating: row.rating, games: row.games, wins: row.wins }));
         }
         return rows.map((row, index) => ({ rank: index + 1, ...row, tier: tierFor(row.rating) }));
+    }
+
+    /** Other humans from my latest games, most recent first, each once. */
+    public async recentPlayers(userId: string, limit = 20): Promise<string[]> {
+        const pool = this.database.pool;
+        if (!pool) {
+            const seen: string[] = [];
+            for (const match of [...this.memory.matches].reverse()) {
+                if (!match.players.some((player) => player.userId === userId && !player.isAi)) continue;
+                for (const player of match.players) {
+                    if (!player.isAi && player.userId !== userId && !seen.includes(player.userId)) seen.push(player.userId);
+                }
+                if (seen.length >= limit) break;
+            }
+            return seen.slice(0, limit);
+        }
+        const result = await pool.query(
+            `SELECT other.user_id, MAX(other.match_id) AS last_match
+             FROM match_players mine JOIN match_players other ON other.match_id = mine.match_id AND other.user_id <> mine.user_id AND NOT other.is_ai
+             WHERE mine.user_id = $1 AND NOT mine.is_ai
+             GROUP BY other.user_id ORDER BY last_match DESC LIMIT $2`,
+            [userId, limit],
+        );
+        return result.rows.map((row) => row.user_id);
     }
 
     public async stats(userId: string): Promise<PlayerStats> {

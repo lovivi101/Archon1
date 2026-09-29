@@ -7,7 +7,7 @@ const { execFileSync } = require("node:child_process");
 // disposable PostgreSQL; the migrations are applied first.
 const enabled = Boolean(process.env.PGHOST) && process.env.AVALON_PG_TEST === "1";
 
-test("PostgreSQL records: migrations, save, history, replay, leaderboard", { skip: !enabled && "set PGHOST and AVALON_PG_TEST=1" }, async () => {
+test("PostgreSQL records and friends: migrations, save, history, replay, leaderboards, friendships, messages", { skip: !enabled && "set PGHOST and AVALON_PG_TEST=1" }, async () => {
     execFileSync(process.execPath, [path.join(__dirname, "../scripts/migrate.js")], { stdio: "inherit" });
     const { DatabaseService } = require("../dist/database.service.js");
     const { RecordsService } = require("../dist/records.service.js");
@@ -43,5 +43,23 @@ test("PostgreSQL records: migrations, save, history, replay, leaderboard", { ski
     assert.ok(stats.rank >= 1);
     const board = await records.leaderboard(100);
     assert.ok(board.some((row) => row.userId === alice && row.avatar === "avatar-merlin"));
+    const friendsBoard = await records.leaderboard(100, [alice, bob]);
+    assert.deepEqual(friendsBoard.map((row) => row.userId).sort(), [alice, bob].sort());
+    assert.deepEqual(await records.recentPlayers(alice), [bob]);
+
+    // Friends, requests and private messages (migration 003).
+    const { SocialService } = require("../dist/social.service.js");
+    const social = new SocialService(database);
+    assert.equal((await social.request(alice, bob)).accepted, false);
+    assert.deepEqual((await social.lists(bob)).incoming.map((card) => card.userId), [alice]);
+    assert.equal((await social.request(bob, alice)).accepted, true, "a request back becomes a friendship");
+    assert.ok(await social.areFriends(alice, bob));
+    assert.deepEqual((await social.lists(alice)).outgoing, []);
+    assert.deepEqual((await social.search(alice, "Bo")).filter((card) => card.userId === bob).map((card) => card.isFriend), [true]);
+    await social.send(alice, bob, "hi");
+    await social.send(bob, alice, "hello");
+    assert.deepEqual((await social.messages(alice, bob)).map((message) => message.text), ["hi", "hello"]);
+    await social.remove(bob, alice);
+    assert.equal(await social.areFriends(alice, bob), false);
     await database.onModuleDestroy();
 });

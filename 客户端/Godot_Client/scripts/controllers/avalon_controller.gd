@@ -35,13 +35,13 @@ var last_notice := ""
 var pending_entry: Dictionary = {}
 ## Table size chosen in the lobby.
 var lobby_count := 5
-## Leaderboard page tab: "board" (全服排行) or "history" (我的战绩).
+## Leaderboard page tab: "board" (全服排行), "friends" (好友排行), "history" (我的战绩) or "local" (本机记录).
 var board_tab := "board"
 ## Excalibur recipient picked by the captain (10-player games).
 var excalibur_choice := -1
 ## Second tap on "退出对局" within this tick deadline confirms leaving.
 var exit_armed_until := 0
-## Friends page tab: "friends", "requests" or "search".
+## Friends page tab: "friends", "requests", "recent" or "search".
 var friends_tab := "friends"
 ## Friend whose "删除" was tapped once; a second tap within three seconds removes them.
 var remove_armed := ""
@@ -131,7 +131,8 @@ func connect_server(url: String, entry: Dictionary = {}) -> void:
 		network.connect_to_url(normalized)
 	show_page(3)
 
-const AVATARS := ["avatar-player-knight", "avatar-loyal-female", "avatar-dwarf-warrior", "avatar-merlin", "avatar-morgana", "avatar-assassin"]
+const AVATARS := ["avatar-player-knight", "avatar-loyal-female", "avatar-dwarf-warrior", "avatar-merlin", "avatar-morgana",
+	"avatar-assassin", "avatar-loyal-male", "avatar-percival", "avatar-silver-queen", "avatar-green-ranger"]
 ## Avatar picked on the settings page before saving.
 var avatar_choice := ""
 
@@ -243,8 +244,12 @@ func is_online() -> bool:
 func open_leaderboard() -> void:
 	show_page(15)
 	if is_online():
-		network.send(T.Route.LEADERBOARD, {"limit": 50})
-		network.send(T.Route.MATCH_HISTORY, {"limit": 30})
+		_request_boards()
+
+func _request_boards() -> void:
+	network.send(T.Route.LEADERBOARD, {"limit": 50})
+	network.send(T.Route.LEADERBOARD, {"limit": 50, "scope": "friends"})
+	network.send(T.Route.MATCH_HISTORY, {"limit": 30})
 
 ## Connects and logs in without joining a room, to browse records.
 func connect_for_records() -> void:
@@ -527,8 +532,7 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 				if auto_join:
 					_enter_room()
 				if page == 15:
-					network.send(T.Route.LEADERBOARD, {"limit": 50})
-					network.send(T.Route.MATCH_HISTORY, {"limit": 30})
+					_request_boards()
 				network.send(T.Route.FRIEND_LIST, {})
 		T.Route.JOIN_ROOM:
 			if share != null:

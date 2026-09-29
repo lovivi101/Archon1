@@ -383,6 +383,7 @@ test("friends: search, request, accept, presence, private messages, room invite 
     const pending = await ben.wait(1101, () => true, mark);
     assert.deepEqual(pending.incoming.map((player) => player.userId), ["friend-ann"]);
     assert.deepEqual(pending.friends, []);
+    assert.ok(Array.isArray(pending.recent), "recent players come with the friend list");
 
     mark = ann.packets.length;
     ben.send(1107, { targetId: "friend-ann", text: "hi" });

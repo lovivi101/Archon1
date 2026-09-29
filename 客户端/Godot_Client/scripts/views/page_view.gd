@@ -285,7 +285,7 @@ func _back() -> void:
 ## Bottom status text; a recent notice (e.g. a server error) takes precedence over the page's default hint.
 func state_line(message: String) -> void:
 	var notice_text: String = AvalonApp.controller.last_notice
-	status = text_label(notice_text if not notice_text.is_empty() else message, 60, 1110 if page_id == 2 else 1234, 630, 43, 19)
+	status = text_label(notice_text if not notice_text.is_empty() else message, 60, 1110 if page_id == 2 or (page_id == 16 and AvalonApp.model.dm_target.is_empty()) else 1234, 630, 43, 19)
 
 func dark_panel(x: float, y: float, width: float, height: float, border := Color(0.51, 0.4, 0.24), fill := Color(0.025, 0.04, 0.06, 0.92), border_width := 3, radius := 8) -> Panel:
 	var panel := Panel.new()
@@ -566,10 +566,10 @@ func friends_page() -> void:
 		chip("忽略", 585, top + 6, 110, 52, controller.dismiss_room_invite)
 		top += 74
 	var request_label := "申请 %d" % model.friend_incoming.size() if not model.friend_incoming.is_empty() else "申请"
-	var tabs := [["好友 %d" % model.friends.size(), "friends"], [request_label, "requests"], ["找人", "search"]]
+	var tabs := [["好友 %d" % model.friends.size(), "friends"], [request_label, "requests"], ["最近同局", "recent"], ["找人", "search"]]
 	for i in tabs.size():
 		var key: String = tabs[i][1]
-		chip(tabs[i][0], 95 + i * 190, top + 5, 175, 56, func(): controller.friends_tab = key; _refresh(), controller.friends_tab == key)
+		chip(tabs[i][0], 88 + i * 145, top + 5, 135, 56, func(): controller.friends_tab = key; _refresh(), controller.friends_tab == key)
 	top += 75
 	var rows: Array = []
 	match controller.friends_tab:
@@ -581,11 +581,14 @@ func friends_page() -> void:
 				rows.append([entry, "等待对方同意", []])
 			if rows.is_empty():
 				text_label("没有待处理的好友申请", 130, top + 150, 490, 60, 21)
-		"search":
-			line_edit("friend_query", "", "输入玩家昵称或 ID", 105, top, 390, 58)
-			chip("搜索", 510, top, 135, 60, func(): controller.search_players(field_text("friend_query")))
-			top += 75
-			for entry in model.friend_search:
+		"search", "recent":
+			var entries: Array = model.friend_recent
+			if controller.friends_tab == "search":
+				line_edit("friend_query", "", "输入玩家昵称或 ID", 105, top, 390, 58)
+				chip("搜索", 510, top, 135, 60, func(): controller.search_players(field_text("friend_query")))
+				top += 75
+				entries = model.friend_search
+			for entry in entries:
 				var id := str(entry.userId)
 				var actions: Array = []
 				var state := presence_text(entry)
@@ -597,7 +600,7 @@ func friends_page() -> void:
 					actions.append(["添加", controller.request_friend.bind(id)])
 				rows.append([entry, state, actions])
 			if rows.is_empty():
-				text_label("按昵称搜索玩家，或输入对方的 ID", 130, top + 120, 490, 60, 21)
+				text_label("按昵称搜索玩家，或输入对方的 ID" if controller.friends_tab == "search" else "和其他玩家打完联机对局后，他们会出现在这里", 130, top + 120, 490, 60, 21)
 		_:
 			var sorted: Array = model.friends.duplicate()
 			sorted.sort_custom(func(a, b): return bool(a.get("online", false)) and not bool(b.get("online", false)))
@@ -611,7 +614,7 @@ func friends_page() -> void:
 				rows.append([entry, presence_text(entry), actions])
 			if rows.is_empty():
 				text_label("还没有好友，去“找人”添加吧", 130, top + 150, 490, 60, 21)
-	friend_rows(rows, top, 1140 - top)
+	friend_rows(rows, top, 1100 - top)
 	nav()
 	state_line("在房间里时，可以邀请在线好友加入" if model.session == "in_room" else "进入联机房间后，可以邀请在线好友加入")
 
@@ -1056,16 +1059,16 @@ func build_page() -> void:
 			state_line("拖动列表查看全部记录")
 		15:
 			header("排行榜", "段位分按 Elo 计算")
-			var tabs := [["全服排行", "board"], ["我的战绩", "history"], ["本机记录", "local"]]
+			var tabs := [["全服排行", "board"], ["好友排行", "friends"], ["我的战绩", "history"], ["本机记录", "local"]]
 			for i in tabs.size():
 				var key: String = tabs[i][1]
-				chip(tabs[i][0], 95 + i * 190, 180, 175, 56, func(): controller.board_tab = key; controller.open_leaderboard(), controller.board_tab == key)
+				chip(tabs[i][0], 88 + i * 145, 180, 135, 56, func(): controller.board_tab = key; controller.open_leaderboard(), controller.board_tab == key)
 			art("panel_content_large", 103, 250, 545)
 			var tab: String = controller.board_tab
 			if tab != "local" and not controller.is_online():
 				text_label("连接服务器后可查看全服排行和你的战绩", 150, 520, 450, 80, 22)
 				button("连接服务器", 195, 640, 360, func(): controller.connect_for_records())
-			elif tab == "board":
+			elif tab in ["board", "friends"]:
 				var me: Dictionary = model.stats
 				if not me.is_empty():
 					var rank_text := "第 %d 名" % int(me.get("rank", 0)) if int(me.get("rank", 0)) > 0 else "暂无排名"
@@ -1073,9 +1076,10 @@ func build_page() -> void:
 					if not board_tier.is_empty():
 						art(board_tier, 118, 302, 44)
 					text_label("我：%s · %d 分 · %s · %d 局 %d 胜" % [me.get("tier", ""), int(me.get("rating", 0)), rank_text, int(me.get("games", 0)), int(me.get("wins", 0))], 160 if not board_tier.is_empty() else 140, 300, 470, 50, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
-				var rows: Array = model.leaderboard.map(func(row): return ["%d. %s  %s  %d分（%d局%d胜）" % [int(row.rank), str(row.nickname).left(8), row.tier, int(row.rating), int(row.games), int(row.wins)], GOLD if str(row.userId) == model.user_id else Color(0.95, 0.9, 0.78)])
+				var board: Array = model.friend_board if tab == "friends" else model.leaderboard
+				var rows: Array = board.map(func(row): return ["%d. %s  %s  %d分（%d局%d胜）" % [int(row.rank), str(row.nickname).left(8), row.tier, int(row.rating), int(row.games), int(row.wins)], GOLD if str(row.userId) == model.user_id else Color(0.95, 0.9, 0.78)])
 				if rows.is_empty():
-					rows = ["还没有人完成对局"]
+					rows = ["你和好友还没有完成联机对局" if tab == "friends" else "还没有人完成对局"]
 				scroll_lines(rows, 145, 360, 470, 700)
 			elif tab == "history":
 				var rows: Array = model.match_history.map(func(entry):
@@ -1132,19 +1136,20 @@ func build_page() -> void:
 			line_edit("nickname", model.nickname, "输入昵称", 90, 250, 570, 56)
 			text_label("头像", 90, 330, 570, 40, 20, HORIZONTAL_ALIGNMENT_LEFT)
 			var avatars: Array = AvalonController.AVATARS
+			# Five per row, two rows, above the sound switches at y 785.
 			for i in avatars.size():
 				var key: String = avatars[i]
-				var x := 95 + (i % 3) * 190
-				var y := 385 + (i / 3) * 190
+				var x := 92 + (i % 5) * 116
+				var y := 380 + (i / 5) * 190
 				var chosen := key == controller.avatar_choice
-				dark_panel(x, y, 150, 165, GOLD if chosen else Color(0.35, 0.3, 0.22), Color(0.16, 0.12, 0.05, 0.95) if chosen else Color(0.025, 0.04, 0.06, 0.92), 5 if chosen else 2)
-				art(key, x + 20, y + 12, 110)
+				dark_panel(x, y, 104, 176, GOLD if chosen else Color(0.35, 0.3, 0.22), Color(0.16, 0.12, 0.05, 0.95) if chosen else Color(0.025, 0.04, 0.06, 0.92), 5 if chosen else 2)
+				art(key, x + 8, y + 14, 88)
 				if chosen:
-					art("check-icon", x + 108, y + 118, 38)
+					art("check-icon", x + 66, y + 134, 34)
 				var pick := Button.new()
 				pick.flat = true
 				pick.position = Vector2(x, y)
-				pick.size = Vector2(150, 165)
+				pick.size = Vector2(104, 176)
 				pick.pressed.connect(func(): controller.avatar_choice = key; _refresh())
 				layer.add_child(pick)
 			var muted: bool = AvalonApp.profile.data.get("muted", false)

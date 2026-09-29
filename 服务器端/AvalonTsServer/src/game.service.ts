@@ -135,12 +135,16 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
                     this.send(client, Route.MatchDetail, { code: 0, match });
                     break;
                 }
-                case Route.Leaderboard:
+                case Route.Leaderboard: {
+                    // scope "friends": me and my friends, ranked among ourselves.
+                    const friends = payload.scope === "friends";
+                    const among = friends ? [userId, ...(await this.socially(() => this.social.friendIds(userId)))] : undefined;
                     this.send(client, Route.Leaderboard, {
-                        code: 0, top: await this.stored(() => this.records.leaderboard(clampLimit(payload.limit, 50))),
+                        code: 0, scope: friends ? "friends" : "global", top: await this.stored(() => this.records.leaderboard(clampLimit(payload.limit, 50), among)),
                         me: await this.stored(() => this.records.stats(userId)),
                     });
                     break;
+                }
                 case Route.MyStats:
                     this.send(client, Route.MyStats, { code: 0, ...(await this.stored(() => this.records.stats(userId))) });
                     break;
@@ -316,9 +320,15 @@ export class AvalonGameService implements OnModuleInit, OnModuleDestroy {
         switch (route) {
             case Route.FriendList: {
                 const lists = await this.socially(() => this.social.lists(userId));
+                const recentIds = await this.stored(() => this.records.recentPlayers(userId));
+                const cards = await this.socially(() => this.social.lookup(recentIds));
+                const friendIds = new Set(lists.friends.map((card) => card.userId));
+                const pendingIds = new Set(lists.outgoing.map((card) => card.userId));
+                const recent = recentIds.map((id) => cards.get(id)).filter((card): card is PlayerCard => card !== undefined)
+                    .map((card) => ({ ...this.presence(card), isFriend: friendIds.has(card.userId), pending: pendingIds.has(card.userId) }));
                 this.send(client, route, {
                     code: 0, friends: lists.friends.map((card) => this.presence(card)),
-                    incoming: lists.incoming.map((card) => this.presence(card)), outgoing: lists.outgoing.map((card) => this.presence(card)),
+                    incoming: lists.incoming.map((card) => this.presence(card)), outgoing: lists.outgoing.map((card) => this.presence(card)), recent,
                 });
                 break;
             }

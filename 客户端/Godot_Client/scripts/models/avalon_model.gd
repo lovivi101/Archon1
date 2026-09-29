@@ -63,6 +63,8 @@ var final_result: Dictionary = {}
 ## {rating, tier, games, wins, rank}
 var stats: Dictionary = {}
 var leaderboard: Array = []
+## Me and my friends ranked among ourselves (Leaderboard with scope "friends").
+var friend_board: Array = []
 var match_history: Array = []
 ## Full server replay of a past match, shown on the replay page instead of final_result.
 var replay: Dictionary = {}
@@ -76,6 +78,8 @@ var friend_incoming: Array = []
 var friend_outgoing: Array = []
 ## Search results; entries also carry isFriend and pending.
 var friend_search: Array = []
+## Other players from my recent online games, newest first; entries also carry isFriend and pending.
+var friend_recent: Array = []
 ## Friend whose private messages are open (userId), and that conversation: [{senderId, targetId, text, time}].
 var dm_target := ""
 var dm_messages: Array = []
@@ -273,7 +277,10 @@ func apply_packet(route: int, data: Dictionary) -> void:
 		1002:
 			replay = data.get("match", {}).duplicate(true)
 		1003:
-			leaderboard = data.get("top", []).duplicate(true)
+			if str(data.get("scope", "global")) == "friends":
+				friend_board = data.get("top", []).duplicate(true)
+			else:
+				leaderboard = data.get("top", []).duplicate(true)
 			stats = data.get("me", stats).duplicate()
 		1004:
 			stats = data.duplicate()
@@ -282,6 +289,7 @@ func apply_packet(route: int, data: Dictionary) -> void:
 			friends = data.get("friends", []).duplicate(true)
 			friend_incoming = data.get("incoming", []).duplicate(true)
 			friend_outgoing = data.get("outgoing", []).duplicate(true)
+			friend_recent = data.get("recent", []).duplicate(true)
 		1102:
 			friend_search = data.get("players", []).duplicate(true)
 		1107:
@@ -355,7 +363,7 @@ func get_team_size() -> int:
 
 ## Friend lists and private messages, for the friends page to redraw on change.
 func social_snapshot() -> Array:
-	return [friends, friend_incoming, friend_outgoing, friend_search, dm_target, dm_messages.size(), dm_unread, room_invite]
+	return [friends, friend_incoming, friend_outgoing, friend_search, friend_recent, friend_board, dm_target, dm_messages.size(), dm_unread, room_invite]
 
 func _add_direct(message: Dictionary) -> void:
 	var other := str(message.get("targetId", "")) if str(message.get("senderId", "")) == user_id else str(message.get("senderId", ""))
