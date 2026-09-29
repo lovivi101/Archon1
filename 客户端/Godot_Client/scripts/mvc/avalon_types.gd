@@ -80,5 +80,11 @@ static func rules_text(player_count: int) -> String:
 	return "、".join(parts) if not parts.is_empty() else "无"
 
 ## Optional modules per table size, matching the server: Lady of the Lake at 7, Excalibur at 10.
+## Badge art for a rank tier name from the server ("青铜·见习骑士" ...), or "" when the art is not in yet.
+static func tier_icon(tier: String) -> String:
+	var files := {"青铜": "tier-1-bronze", "白银": "tier-2-silver", "黄金": "tier-3-gold", "铂金": "tier-4-platinum", "钻石": "tier-5-diamond", "王者": "tier-6-king"}
+	var name: String = files.get(tier.left(2), "")
+	return name if not name.is_empty() and ResourceLoader.exists("res://assets/ui/%s.png" % name) else ""
+
 static func rules_for(player_count: int) -> Dictionary:
 	return {"lady": player_count == 7, "excalibur": player_count == 10}

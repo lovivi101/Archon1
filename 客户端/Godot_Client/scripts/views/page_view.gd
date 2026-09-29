@@ -353,8 +353,13 @@ func player_avatar(seat: int, x: float, y: float, width := 83.0) -> void:
 	dark_panel(plate_x, y + width + 2, plate_width, 26, border, Color(0.02, 0.03, 0.05, 0.85), 2 if mine or evil else 1, 6)
 	var label := "%d %s" % [seat + 1, display_name(str(p.get("nickname", "玩家"))).left(4 if width < 80.0 else 5)]
 	text_label(label if online else "%d 离线" % (seat + 1), plate_x, y + width + 1, plate_width, 28, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if mine else Color(0.95, 0.9, 0.8))
-	if bool(p.get("isAi", false)):
-		badge("AI", x - 4, y - 2, Color(0.65, 0.75, 0.9), 30)
+	if not online and ResourceLoader.exists("res://assets/ui/badge-offline.png"):
+		art("badge-offline", x - 6, y - 6, 30)
+	elif bool(p.get("isAi", false)):
+		if ResourceLoader.exists("res://assets/ui/badge-ai.png"):
+			art("badge-ai", x - 6, y - 6, 30)
+		else:
+			badge("AI", x - 4, y - 2, Color(0.65, 0.75, 0.9), 30)
 
 ## Seats around the table with markers: a ring for the speaker (blue), the team or my pick (gold) and
 ## revealed evil (red); the captain's crown; ready / picked checks; Excalibur, Lady and what I learned.
@@ -591,7 +596,10 @@ func build_page() -> void:
 			art(model.avatar, 48, 30, 83)
 			text_label(model.nickname, 138, 35, 250, 40, 21, HORIZONTAL_ALIGNMENT_LEFT)
 			if not model.stats.is_empty():
-				text_label("%s · %d 分" % [model.stats.get("tier", ""), int(model.stats.get("rating", 0))], 138, 72, 300, 30, 16, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+				var home_tier := T.tier_icon(str(model.stats.get("tier", "")))
+				if not home_tier.is_empty():
+					art(home_tier, 138, 70, 32)
+				text_label("%s · %d 分" % [model.stats.get("tier", ""), int(model.stats.get("rating", 0))], 138 if home_tier.is_empty() else 174, 72, 300, 30, 16, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			var muted: bool = AvalonApp.profile.data.get("muted", false)
 			var sound := art("sound-icon", 566, 36, 48)
 			if muted:
@@ -843,6 +851,9 @@ func build_page() -> void:
 			text_label(str(fr.get("reason", "")), 80, 260, 590, 60, 21)
 			if not model.last_rating.is_empty() and model.mode == "network":
 				var delta := int(model.last_rating.get("delta", 0))
+				var end_tier := T.tier_icon(str(model.last_rating.get("tier", "")))
+				if not end_tier.is_empty():
+					art(end_tier, 120, 318, 42)
 				text_label("段位分 %s%d → %d · %s" % ["+" if delta >= 0 else "", delta, int(model.last_rating.get("rating", 0)), model.last_rating.get("tier", "")], 80, 320, 590, 40, 21, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 			art("panel_content_large", 140, 370, 470)
 			var roster: Array = fr.get("players", [])
@@ -892,7 +903,10 @@ func build_page() -> void:
 				var me: Dictionary = model.stats
 				if not me.is_empty():
 					var rank_text := "第 %d 名" % int(me.get("rank", 0)) if int(me.get("rank", 0)) > 0 else "暂无排名"
-					text_label("我：%s · %d 分 · %s · %d 局 %d 胜" % [me.get("tier", ""), int(me.get("rating", 0)), rank_text, int(me.get("games", 0)), int(me.get("wins", 0))], 140, 300, 470, 50, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
+					var board_tier := T.tier_icon(str(me.get("tier", "")))
+					if not board_tier.is_empty():
+						art(board_tier, 118, 302, 44)
+					text_label("我：%s · %d 分 · %s · %d 局 %d 胜" % [me.get("tier", ""), int(me.get("rating", 0)), rank_text, int(me.get("games", 0)), int(me.get("wins", 0))], 160 if not board_tier.is_empty() else 140, 300, 470, 50, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 				var rows: Array = model.leaderboard.map(func(row): return ["%d. %s  %s  %d分（%d局%d胜）" % [int(row.rank), str(row.nickname).left(8), row.tier, int(row.rating), int(row.games), int(row.wins)], GOLD if str(row.userId) == model.user_id else Color(0.95, 0.9, 0.78)])
 				if rows.is_empty():
 					rows = ["还没有人完成对局"]

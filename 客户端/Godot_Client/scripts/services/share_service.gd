@@ -227,7 +227,7 @@ func build_card(data: Dictionary) -> Control:
 	var card := Control.new()
 	card.size = Vector2(CARD_SIZE)
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var background := _art(card, "bg-records-hall-750x1334", 0, 0, 750)
+	var background := _art(card, "share-card-bg" if ResourceLoader.exists("res://assets/ui/share-card-bg.png") else "bg-records-hall-750x1334", 0, 0, 750)
 	background.size = Vector2(CARD_SIZE)
 	background.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	var dim := ColorRect.new()
@@ -259,6 +259,9 @@ func build_card(data: Dictionary) -> Control:
 	var rating: Dictionary = data.get("rating", {})
 	if not rating.is_empty():
 		var delta := int(rating.get("delta", 0))
+		var tier_art := AvalonTypes.tier_icon(str(rating.get("tier", "")))
+		if not tier_art.is_empty():
+			_art(card, tier_art, 90, 556, 48)
 		_label(card, "段位分 %s%d → %d · %s" % ["+" if delta >= 0 else "", delta, int(rating.get("rating", 0)), rating.get("tier", "")], 40, 560, 670, 40, 24, GOLD)
 
 	var players: Array = data.get("players", [])
