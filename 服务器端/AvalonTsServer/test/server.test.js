@@ -92,6 +92,7 @@ test.before(async () => {
             AVALON_NIGHT_SECONDS: "0.1", AVALON_PROPOSE_SECONDS: "0.3", AVALON_VOTE_SECONDS: "0.3",
             AVALON_MISSION_SECONDS: "0.3", AVALON_ASSASSIN_SECONDS: "0.3", AVALON_AI_TICK_MS: "20", AVALON_AI_DELAY_MS: "20",
             AVALON_SPEAK_SECONDS: "0.3", AVALON_LADY_SECONDS: "0.3", AVALON_EXCALIBUR_SECONDS: "0.3", AVALON_AI_SPEECH_MS: "20",
+            AVALON_HEARTBEAT_MS: "1000",
         },
         stdio: "ignore",
         windowsHide: true,
@@ -351,4 +352,103 @@ test("a finished game is recorded: rating pushed, history, replay for participan
     assert.equal(stats.rating, rating.rating);
     player.close();
     outsider.close();
+});
+
+test("friends: search, request, accept, presence, private messages, room invite and removal", async () => {
+    const ann = await new Client().open();
+    const ben = await new Client().open();
+    await ann.login("friend-ann");
+    await ben.login("friend-ben");
+
+    let mark = ann.packets.length;
+    ann.send(1102, { query: "friend-b" });
+    const search = await ann.wait(1102, () => true, mark);
+    assert.equal(search.code, 0);
+    assert.deepEqual(search.players.map((player) => player.userId), ["friend-ben"]);
+    assert.equal(search.players[0].online, true);
+    assert.equal(search.players[0].isFriend, false);
+
+    ann.send(1103, { targetId: "friend-ann" });
+    assert.equal((await ann.wait(1103, () => true, mark)).code, 400, "cannot add myself");
+    mark = ann.packets.length;
+    ann.send(1103, { targetId: "friend-ben" });
+    assert.deepEqual(await ann.wait(1103, () => true, mark), { code: 0, targetId: "friend-ben", accepted: false });
+    assert.equal((await ben.wait(1106, (update) => update.kind === "request")).userId, "friend-ann");
+    mark = ann.packets.length;
+    ann.send(1103, { targetId: "friend-ben" });
+    assert.equal((await ann.wait(1103, () => true, mark)).code, 409, "a second request is refused");
+
+    mark = ben.packets.length;
+    ben.send(1101, {});
+    const pending = await ben.wait(1101, () => true, mark);
+    assert.deepEqual(pending.incoming.map((player) => player.userId), ["friend-ann"]);
+    assert.deepEqual(pending.friends, []);
+    assert.ok(Array.isArray(pending.recent), "recent players come with the friend list");
+
+    mark = ann.packets.length;
+    ben.send(1107, { targetId: "friend-ann", text: "hi" });
+    assert.equal((await ben.wait(1107)).code, 403, "strangers cannot message each other");
+
+    ben.send(1104, { requesterId: "friend-ann", accept: true });
+    assert.equal((await ben.wait(1104)).code, 0);
+    assert.equal((await ann.wait(1106, (update) => update.kind === "accepted", mark)).userId, "friend-ben");
+    mark = ann.packets.length;
+    ann.send(1101, {});
+    const lists = await ann.wait(1101, () => true, mark);
+    assert.deepEqual(lists.friends.map((player) => [player.userId, player.online]), [["friend-ben", true]]);
+    assert.deepEqual(lists.outgoing, []);
+
+    mark = ann.packets.length;
+    ben.send(1107, { targetId: "friend-ann", text: "  来一局？ " });
+    const sent = await ben.wait(1107, (reply) => reply.code === 0);
+    assert.equal(sent.message.text, "来一局？");
+    const pushed = await ann.wait(1108, () => true, mark);
+    assert.equal(pushed.senderId, "friend-ben");
+    assert.equal(pushed.text, "来一局？");
+    ann.send(1109, { targetId: "friend-ben" });
+    assert.deepEqual((await ann.wait(1109)).messages.map((message) => message.text), ["来一局？"]);
+
+    assert.equal((await ben.join("friend-room")).code, 0);
+    mark = ann.packets.length;
+    ben.send(1110, { targetId: "friend-ann" });
+    assert.equal((await ben.wait(1110)).code, 0);
+    const invite = await ann.wait(1111, () => true, mark);
+    assert.equal(invite.roomId, "friend-room");
+    assert.equal(invite.fromId, "friend-ben");
+    mark = ann.packets.length;
+    ann.send(1101, {});
+    assert.equal((await ann.wait(1101, () => true, mark)).friends[0].roomId, "friend-room", "friends see which room I am in");
+
+    mark = ben.packets.length;
+    ann.close();
+    assert.equal((await ben.wait(1106, (update) => update.kind === "offline", mark)).userId, "friend-ann");
+    mark = ben.packets.length;
+    ben.send(1110, { targetId: "friend-ann" });
+    assert.equal((await ben.wait(1110, () => true, mark)).code, 404, "offline friends cannot be invited");
+
+    mark = ben.packets.length;
+    ben.send(1105, { targetId: "friend-ann" });
+    assert.equal((await ben.wait(1105, () => true, mark)).code, 0);
+    ben.send(1101, {});
+    assert.deepEqual((await ben.wait(1101, () => true, mark)).friends, []);
+    ben.close();
+});
+
+test("oversized frames are refused and sockets that stop answering pings are dropped", async () => {
+    const big = await new Client().open();
+    const closed = new Promise((resolve) => big.socket.once("close", (code) => resolve(code)));
+    big.socket.send(Buffer.alloc(70000));
+    assert.equal(await closed, 1009);
+
+    const healthy = await new Client().open();
+    await healthy.login("heartbeat-ok");
+    const silent = new WebSocket(`ws://127.0.0.1:${port}`, { autoPong: false });
+    await new Promise((resolve, reject) => {
+        silent.once("open", resolve);
+        silent.once("error", reject);
+    });
+    const dropped = new Promise((resolve) => silent.once("close", (code) => resolve(code)));
+    assert.equal(await dropped, 1006, "terminated without a close frame");
+    assert.equal(healthy.socket.readyState, WebSocket.OPEN, "clients that answer pings stay connected");
+    healthy.close();
 });

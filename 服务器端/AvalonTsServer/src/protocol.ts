@@ -1,5 +1,8 @@
 import { RawData } from "ws";
 
+/** Largest frame the server accepts; the Godot client uses the same limit. */
+export const MAX_PACKET_BYTES = 65536;
+
 export interface Packet {
     seq: number;
     route: number;
@@ -41,4 +44,10 @@ export function encodePacket(seq: number, route: number, payload: unknown): Buff
 
 export function isObject(value: unknown): value is Record<string, any> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function packetSize(raw: RawData): number {
+    if (Buffer.isBuffer(raw)) return raw.length;
+    if (Array.isArray(raw)) return raw.reduce((total, part) => total + part.length, 0);
+    return raw.byteLength;
 }

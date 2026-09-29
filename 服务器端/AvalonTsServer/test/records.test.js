@@ -65,3 +65,20 @@ test("in-memory records: history, replay only for participants, leaderboard and 
     assert.ok(stats.rank >= 1);
     assert.deepEqual(await records.stats("nobody"), { rating: START_RATING, tier: tierFor(START_RATING), games: 0, wins: 0, rank: 0 });
 });
+
+test("friends board ranks only the given players; recent players come from my latest games, newest first", async () => {
+    const records = new RecordsService({ pool: undefined });
+    await records.saveMatch(log({ humans: [["alice", Role.Merlin], ["bob", Role.Assassin]], roomId: "a" }));
+    await records.saveMatch(log({ humans: [["alice", Role.Merlin], ["carol", Role.Assassin]], roomId: "b" }));
+    await records.saveMatch(log({ humans: [["dave", Role.Merlin], ["erin", Role.Assassin]], roomId: "c" }));
+
+    const friends = await records.leaderboard(50, ["alice", "carol"]);
+    assert.deepEqual(friends.map((row) => row.userId).sort(), ["alice", "carol"]);
+    assert.deepEqual(friends.map((row) => row.rank), [1, 2]);
+    assert.equal((await records.leaderboard()).length, 5, "without a filter every rated player is listed");
+
+    assert.deepEqual(await records.recentPlayers("alice"), ["carol", "bob"]);
+    assert.deepEqual(await records.recentPlayers("bob"), ["alice"]);
+    assert.deepEqual(await records.recentPlayers("nobody"), []);
+    assert.deepEqual(await records.recentPlayers("alice", 1), ["carol"]);
+});

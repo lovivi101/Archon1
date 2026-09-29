@@ -66,7 +66,8 @@ npm run dev
 - 新阶段：发言 7、湖中仙女 8、王者之剑 9。新路由：`Chat` 801（发言，`{ text }`）、`ChatMessage` 802（`{ seat, nickname, text, channel, round }`，重连时补发历史并带 `history: true`）、`EndSpeech` 803、`SpeakerChange` 804（`{ speakerSeat, speechOrder, timeout, deadline }`）、`LadyCheck` 901（`{ targetSeat }`）、`LadyResult` 902（仅持有者）、`LadyUsed` 903、`ExcaliburUse` 904（`{ targetSeat }`，-1 表示不使用）、`ExcaliburResult` 905（仅持有者）、`ExcaliburUsed` 906、`EvilRevealed` 703（`{ evilSeats }`）。`ProposeTeam` 在 10 人局需带 `excaliburSeat`。`IdentityPush` 新增 `facts`：本人通过湖中仙女或王者之剑得知的阵营（重连后仍保留）。
 - `StageChange`(302) 除 `stage`、`timeout`（剩余秒数）外，还带上 `deadline`（毫秒时间戳）、`captainIdx`、`round`、`failedVotes`、`selectedSeats`、`missionResults`。每次切换阶段前还会先推送一次 `RoomInfoInit`(201) 完整房间快照，客户端不需要自己推算队长和轮次。
 - 房间快照里的玩家新增 `isOnline` 字段。
-- 战绩与排行（需已登录）：`MatchHistory` 1001（`{ limit? }` → `{ matches: [{ matchId, endedAt, playerCount, role, won, reason, ratingDelta }] }`，最新在前）、`MatchDetail` 1002（`{ matchId }` → 完整复盘：玩家与身份、每次组队与投票、任务结果、王者之剑、湖中仙女、公开发言；只有参加过该局的玩家能查看，否则 404）、`Leaderboard` 1003（`{ limit? }` → `{ entries: [{ rank, userId, nickname, avatar, rating, tier, games, wins }] }`）、`MyStats` 1004（→ `{ rating, tier, games, wins, rank }`，未打过对局时 rank 为 0）。每局结束时服务端保存对局并向每位真人推送 `RatingUpdate` 1005（`{ matchId, rating, delta, tier, games, wins }`）。数据库出错时这些路由返回 503。
+- 战绩与排行（需已登录）：`MatchHistory` 1001（`{ limit? }` → `{ matches: [{ matchId, endedAt, playerCount, role, won, reason, ratingDelta }] }`，最新在前）、`MatchDetail` 1002（`{ matchId }` → 完整复盘：玩家与身份、每次组队与投票、任务结果、王者之剑、湖中仙女、公开发言；只有参加过该局的玩家能查看，否则 404）、`Leaderboard` 1003（`{ limit?, scope? }` → `{ scope, top: [{ rank, userId, nickname, avatar, rating, tier, games, wins }], me }`；`scope: "friends"` 只排我和好友）、`MyStats` 1004（→ `{ rating, tier, games, wins, rank }`，未打过对局时 rank 为 0）。每局结束时服务端保存对局并向每位真人推送 `RatingUpdate` 1005（`{ matchId, rating, delta, tier, games, wins }`）。数据库出错时这些路由返回 503。
+- 好友（需已登录）：`FriendList` 1101（→ `{ friends, incoming, outgoing, recent }`，每项 `{ userId, nickname, avatar, online, roomId }`；`recent` 是最近联机对局里的其他真人，最新在前，另带 `isFriend`、`pending`）、`FriendSearch` 1102（`{ query }` 按昵称包含或 ID 精确匹配 → `{ players }`，另带 `isFriend`、`pending`）、`FriendRequest` 1103（`{ targetId }` → `{ targetId, accepted }`；对方已向我申请时直接成为好友）、`FriendReply` 1104（`{ requesterId, accept }`）、`FriendRemove` 1105（`{ targetId }`）。好友关系变化和好友上下线推送 `FriendUpdate` 1106（`{ kind: request|accepted|removed|online|offline, userId, nickname }`）。私信：`DirectChat` 1107（`{ targetId, text }`，只能发给好友，1–200 字）→ 对方收到 `DirectMessage` 1108；`DirectHistory` 1109（`{ targetId }` → 最近 50 条）。`RoomInvite` 1110（`{ targetId }`，自己在未开局且有空位的房间里、对方是在线好友）→ 对方收到 `RoomInvitePush` 1111（`{ fromId, nickname, roomId, playerCount }`）。好友上限 100。
 - `/health` 只返回连接数和房间数，不再返回房间内容和玩家 ID。
 
 ## 规则
@@ -93,6 +94,7 @@ npm run dev
 | `AVALON_AI_DELAY_MS` | 同 `AVALON_AI_TICK_MS` | 每个阶段开始后 AI 等待多久再行动 |
 | `AVALON_MAX_ROOMS` | 1000 | 同时存在的房间上限 |
 | `AVALON_ABANDON_SECONDS` | 60 | 对局中无人在线多久后回收房间 |
+| `AVALON_HEARTBEAT_MS` | 30000 | 心跳间隔；连续一个间隔没有回应 ping 的连接会被断开（座位交给 AI 托管）。单个数据包最大 64 KB，超过会以 1009 关闭连接 |
 | `AVALON_TOKEN_SECRET` | 开发环境随机 | 登录令牌签名密钥，生产环境必填且不少于 32 个字符 |
 | `AVALON_TOKEN_TTL_DAYS` | 30 | 令牌有效天数 |
 | `AVALON_ALLOW_LEGACY_LOGIN` | 生产环境 0，其他 1 | 是否允许客户端自报 `userId` 登录 |
@@ -113,6 +115,7 @@ npm run dev
 - `src/avalon.room.ts`：单个房间的规则状态机（纯逻辑，不直接操作 socket 或定时器，时钟和随机数可注入，便于测试）。
 - `src/avalon.ai.ts`：AI 决策，只接收该座位可见的信息。
 - `src/avalon.types.ts`：路由、身份、阶段、错误码和规则常量。
+- `src/social.service.ts`：好友、好友申请和私信。配置 PostgreSQL 时存在 `friend_requests`、`friendships`、`direct_messages`（`migrations/003_social.sql`），否则存在进程内存，行为一致；在线状态和所在房间由 `game.service.ts` 补上。
 - `src/records.service.ts`：对局记录、积分计算、战绩、复盘、排行榜。配置了 PostgreSQL 时写入 `matches`、`match_players` 和 `player_profiles`（`migrations/002_match_records.sql`，积分更新在事务内加行锁）；未配置 `PGHOST` 时保存在进程内存（最多 5000 局，重启丢失），行为一致，方便开发和测试。
 
 NestJS 提供成熟的应用结构和运行机制，但不会自动保证现有阿瓦隆规则正确。当前登录玩家资料、对局记录和积分可持久化到 PostgreSQL，登录支持游客、令牌和微信；房间、身份和对局仍保存在进程内存中，重启会丢失，只能单实例运行。

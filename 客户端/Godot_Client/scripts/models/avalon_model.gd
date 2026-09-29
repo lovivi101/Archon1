@@ -63,11 +63,30 @@ var final_result: Dictionary = {}
 ## {rating, tier, games, wins, rank}
 var stats: Dictionary = {}
 var leaderboard: Array = []
+## Me and my friends ranked among ourselves (Leaderboard with scope "friends").
+var friend_board: Array = []
 var match_history: Array = []
 ## Full server replay of a past match, shown on the replay page instead of final_result.
 var replay: Dictionary = {}
 ## Rating change pushed after the last game: {matchId, rating, delta, tier, games, wins}.
 var last_rating: Dictionary = {}
+
+# Friends (online only); entries are {userId, nickname, avatar, online, roomId}.
+var friends: Array = []
+## Friend requests waiting for my answer, and the ones I sent.
+var friend_incoming: Array = []
+var friend_outgoing: Array = []
+## Search results; entries also carry isFriend and pending.
+var friend_search: Array = []
+## Other players from my recent online games, newest first; entries also carry isFriend and pending.
+var friend_recent: Array = []
+## Friend whose private messages are open (userId), and that conversation: [{senderId, targetId, text, time}].
+var dm_target := ""
+var dm_messages: Array = []
+## userIds with private messages not read yet.
+var dm_unread: Array = []
+## Latest room invite from a friend: {fromId, nickname, roomId, playerCount}.
+var room_invite: Dictionary = {}
 
 const MAX_HISTORY := 60
 const MAX_CHAT := 60
@@ -258,11 +277,31 @@ func apply_packet(route: int, data: Dictionary) -> void:
 		1002:
 			replay = data.get("match", {}).duplicate(true)
 		1003:
-			leaderboard = data.get("top", []).duplicate(true)
+			if str(data.get("scope", "global")) == "friends":
+				friend_board = data.get("top", []).duplicate(true)
+			else:
+				leaderboard = data.get("top", []).duplicate(true)
 			stats = data.get("me", stats).duplicate()
 		1004:
 			stats = data.duplicate()
 			stats.erase("code")
+		1101:
+			friends = data.get("friends", []).duplicate(true)
+			friend_incoming = data.get("incoming", []).duplicate(true)
+			friend_outgoing = data.get("outgoing", []).duplicate(true)
+			friend_recent = data.get("recent", []).duplicate(true)
+		1102:
+			friend_search = data.get("players", []).duplicate(true)
+		1107:
+			_add_direct(data.get("message", {}))
+		1108:
+			_add_direct(data)
+		1109:
+			if str(data.get("targetId", "")) == dm_target:
+				dm_messages = data.get("messages", []).duplicate(true)
+		1111:
+			room_invite = data.duplicate()
+			room_invite.erase("code")
 		1005:
 			last_rating = data.duplicate()
 			stats = {"rating": data.get("rating", 1000), "tier": data.get("tier", ""), "games": data.get("games", 0), "wins": data.get("wins", 0), "rank": stats.get("rank", 0)}
@@ -321,6 +360,19 @@ func did_i_win() -> Variant:
 
 func get_team_size() -> int:
 	return Types.team_size(players.size(), round)
+
+## Friend lists and private messages, for the friends page to redraw on change.
+func social_snapshot() -> Array:
+	return [friends, friend_incoming, friend_outgoing, friend_search, friend_recent, friend_board, dm_target, dm_messages.size(), dm_unread, room_invite]
+
+func _add_direct(message: Dictionary) -> void:
+	var other := str(message.get("targetId", "")) if str(message.get("senderId", "")) == user_id else str(message.get("senderId", ""))
+	if other == dm_target:
+		dm_messages.append(message.duplicate())
+		if dm_messages.size() > MAX_CHAT:
+			dm_messages.pop_front()
+	elif not other in dm_unread:
+		dm_unread.append(other)
 
 func snapshot() -> Dictionary:
 	return {"mode": mode, "connection": connection, "session": session, "room": room_id,

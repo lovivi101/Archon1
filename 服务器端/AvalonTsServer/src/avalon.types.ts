@@ -39,12 +39,37 @@ export enum Route {
     MatchHistory = 1001,
     /** Full replay of a game I played: `{ matchId }` -> `{ match }`. */
     MatchDetail = 1002,
-    /** Top players by rating: `{ limit }` -> `{ top, me }`. */
+    /** Top players by rating: `{ limit, scope? }` -> `{ scope, top, me }`; scope "friends" ranks me and my friends only. */
     Leaderboard = 1003,
     /** My rating, tier, games, wins and rank. */
     MyStats = 1004,
     /** Pushed after each game: `{ matchId, rating, delta, tier, games, wins }`. */
     RatingUpdate = 1005,
+    /**
+     * Friends, pending requests and players from my recent games: `{}` -> `{ friends, incoming, outgoing, recent }`,
+     * entries `{ userId, nickname, avatar, online, roomId }`; recent entries also carry `isFriend` and `pending`.
+     */
+    FriendList = 1101,
+    /** Players by nickname or id: `{ query }` -> `{ players }`; entries also carry `isFriend` and `pending`. */
+    FriendSearch = 1102,
+    /** `{ targetId }` -> `{ targetId, accepted }`; accepted is true when the target had already asked us. */
+    FriendRequest = 1103,
+    /** `{ requesterId, accept }` -> `{ requesterId, accept }`. */
+    FriendReply = 1104,
+    /** `{ targetId }` -> `{ targetId }`. */
+    FriendRemove = 1105,
+    /** Pushed when the friend list changes: `{ kind: "request"|"accepted"|"removed"|"online"|"offline", userId, nickname }`. */
+    FriendUpdate = 1106,
+    /** Private message to a friend: `{ targetId, text }` -> `{ message }`; the friend also gets DirectMessage. */
+    DirectChat = 1107,
+    /** Pushed private message: `{ senderId, targetId, nickname, text, time }`. */
+    DirectMessage = 1108,
+    /** Recent private messages with a friend: `{ targetId }` -> `{ targetId, messages }`. */
+    DirectHistory = 1109,
+    /** Invites an online friend to my room: `{ targetId }` -> `{ targetId }`; the friend gets RoomInvitePush. */
+    RoomInvite = 1110,
+    /** `{ fromId, nickname, roomId, playerCount }`. */
+    RoomInvitePush = 1111,
 }
 
 export enum Role {
