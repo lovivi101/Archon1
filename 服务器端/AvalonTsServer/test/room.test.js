@@ -226,6 +226,21 @@ test("timeouts play for idle humans so a game always finishes", () => {
     assert.ok(ctx.room.outcome.winReason.length > 0);
 });
 
+test("the captain rotates one seat per proposal, rejected or not, for the whole game", () => {
+    for (let seed = 1; seed <= 30; seed += 1) {
+        const players = 5 + (seed % 6);
+        const ctx = setup({ seed, players });
+        ctx.startAll();
+        const first = ctx.room.captainIdx;
+        ctx.runToEnd();
+        const proposals = ctx.room.matchLog().record.proposals;
+        assert.ok(proposals.length > 0);
+        proposals.forEach((proposal, index) => {
+            assert.equal(proposal.captainSeat, (first + index) % players, `seed ${seed}: proposal ${index + 1} of ${proposals.length}`);
+        });
+    }
+});
+
 test("AI seats act after the AI delay without waiting for the timeout", () => {
     const ctx = setup({ humans: 1, seed: 29 });
     ctx.startAll();
