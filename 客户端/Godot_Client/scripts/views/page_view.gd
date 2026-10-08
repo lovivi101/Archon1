@@ -12,6 +12,8 @@ var timer_label: Label
 ## Chat boxes that stay scrolled to the newest message (see _process).
 var pinned_scrolls: Array = []
 var _rebuild_queued := false
+## Frame art scaled down for 9-slice drawing, by "name@height".
+static var _ornate_cache: Dictionary = {}
 var _signature := ""
 
 ## Seats sit evenly on an ellipse around the table, seat 1 at the top, clockwise.
@@ -35,6 +37,11 @@ static func seat_size(count: int) -> float:
 ## Nickname for seat plates and lists; AI seats carry a badge instead of the "AI_" prefix.
 static func display_name(nickname: String) -> String:
 	return nickname.trim_prefix("AI_")
+## Role emblems for identity cards and result rosters.
+const ROLE_ART := {T.Role.MERLIN: "role-merlin", T.Role.PERCIVAL: "role-percival", T.Role.SERVANT: "role-servant", T.Role.ASSASSIN: "role-assassin",
+	T.Role.MORGANA: "role-morgana", T.Role.MINION: "role-minion", T.Role.OBERON: "role-oberon", T.Role.MORDRED: "role-mordred"}
+## Pages with the bottom navigation bar; their status line sits above it.
+const NAV_PAGES := [2, 15, 16]
 const GOLD := Color(0.95, 0.78, 0.4)
 const RED := Color(0.95, 0.45, 0.4)
 const BLUE := Color(0.55, 0.75, 1.0)
@@ -118,6 +125,9 @@ func _process(_delta: float) -> void:
 func _notice(message: String) -> void:
 	if is_instance_valid(status):
 		status.text = message
+		var band: Variant = status.get_meta("band", null)
+		if band is Control and is_instance_valid(band):
+			band.visible = not message.is_empty()
 
 ## Draws the result card for the finished game (or the open server replay), saves it and shows a preview
 ## with the platform's share button. The preview sits above the page layer, so rebuilds keep it.
@@ -182,6 +192,48 @@ func art(name: String, x: float, y: float, width: float, parent: Control = layer
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(rect)
 	return rect
+
+## Frame art (tabs, small buttons, bars) stretched to any width without distorting its ends: the art is
+## scaled to `height` first, then its middle is stretched while the ornate ends keep their shape.
+func ornate(name: String, x: float, y: float, width: float, height: float, parent: Control = layer) -> NinePatchRect:
+	var frame := NinePatchRect.new()
+	var key := "%s@%d" % [name, int(height)]
+	if not _ornate_cache.has(key):
+		var source: Texture2D = load("res://assets/ui/%s.png" % name)
+		var image := source.get_image()
+		if image.is_compressed():
+			image.decompress()
+		var box: Array = catalog.get(name, [0, 0, image.get_width(), image.get_height()])
+		image = image.get_region(Rect2i(int(box[0]), int(box[1]), int(box[2]), int(box[3])))
+		image.resize(maxi(8, int(round(float(box[2]) * height / float(box[3])))), int(height), Image.INTERPOLATE_LANCZOS)
+		_ornate_cache[key] = ImageTexture.create_from_image(image)
+	frame.texture = _ornate_cache[key]
+	var cap := int(minf(height * 0.55, width / 2.0 - 1.0))
+	frame.patch_margin_left = cap
+	frame.patch_margin_right = cap
+	frame.patch_margin_top = int(height * 0.3)
+	frame.patch_margin_bottom = int(height * 0.3)
+	frame.position = Vector2(x, y)
+	frame.size = Vector2(width, height)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(frame)
+	return frame
+
+## Tab of a segmented control (leaderboard, friends): blue plate when selected, dark plate otherwise.
+func tab(value: String, x: float, y: float, width: float, height: float, action: Callable, selected := false) -> Button:
+	ornate("tab_active_blue" if selected else "tab_inactive_dark", x, y, width, height)
+	var control := Button.new()
+	control.flat = true
+	control.text = value
+	control.position = Vector2(x, y)
+	control.size = Vector2(width, height)
+	control.add_theme_font_size_override("font_size", 21)
+	control.add_theme_color_override("font_color", GOLD if selected else Color(0.82, 0.78, 0.68))
+	control.add_theme_color_override("font_hover_color", Color.WHITE)
+	control.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
+	control.pressed.connect(action)
+	layer.add_child(control)
+	return control
 
 func text_label(value: String, x: float, y: float, width: float, height: float, size := 26, align := HORIZONTAL_ALIGNMENT_CENTER, color := Color(0.95, 0.9, 0.78)) -> Label:
 	var label := Label.new()
@@ -253,22 +305,27 @@ func header(title: String, subtitle := "") -> void:
 		text_label(subtitle, 120, 96, 510, 34, 17, HORIZONTAL_ALIGNMENT_CENTER, Color(0.85, 0.8, 0.68))
 	# Inside a room or a game, "back" means leaving, which has its own buttons.
 	if page_id not in [2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 17]:
+		dark_panel(12, 50, 72, 68, GOLD, Color(0.03, 0.05, 0.08, 0.9), 2, 34)
+		var arrow := art("back-icon", 21, 64, 54)
+		arrow.modulate = Color(1.25, 1.2, 1.1)
 		var back := Button.new()
-		back.text = "‹"
 		back.flat = true
-		back.position = Vector2(31, 38)
-		back.size = Vector2(60, 70)
-		back.add_theme_font_size_override("font_size", 48)
+		back.tooltip_text = "返回"
+		back.position = Vector2(4, 36)
+		back.size = Vector2(84, 92)
+		back.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 		back.pressed.connect(_back)
 		layer.add_child(back)
 	if page_id in [5, 6, 7, 8, 9, 10, 11, 12, 17] and AvalonApp.model.stage != T.Stage.END:
+		ornate("button_small_action", 664, 56, 78, 46)
 		var leave := Button.new()
 		leave.text = "退出"
 		leave.flat = true
-		leave.position = Vector2(655, 45)
-		leave.size = Vector2(80, 50)
-		leave.add_theme_font_size_override("font_size", 20)
-		leave.add_theme_color_override("font_color", Color(0.85, 0.75, 0.6))
+		leave.position = Vector2(664, 50)
+		leave.size = Vector2(78, 58)
+		leave.add_theme_font_size_override("font_size", 19)
+		leave.add_theme_color_override("font_color", Color(0.95, 0.72, 0.62))
+		leave.add_theme_color_override("font_hover_color", Color.WHITE)
 		leave.pressed.connect(func(): AvalonApp.controller.exit_game())
 		layer.add_child(leave)
 
@@ -283,9 +340,15 @@ func _back() -> void:
 		controller.show_page(2 if page_id in [3, 15, 16, 18] else controller.resume_page)
 
 ## Bottom status text; a recent notice (e.g. a server error) takes precedence over the page's default hint.
+## It sits on a dark band so it stays readable over candles and floor tiles.
 func state_line(message: String) -> void:
 	var notice_text: String = AvalonApp.controller.last_notice
-	status = text_label(notice_text if not notice_text.is_empty() else message, 60, 1110 if page_id == 2 or (page_id == 16 and AvalonApp.model.dm_target.is_empty()) else 1234, 630, 43, 19)
+	var above_nav: bool = page_id in NAV_PAGES and not (page_id == 16 and not AvalonApp.model.dm_target.is_empty() and AvalonApp.controller.is_online())
+	var y := 1108.0 if above_nav else 1232.0
+	var band := dark_panel(70, y + 2, 610, 40, Color(0, 0, 0, 0), Color(0.01, 0.015, 0.025, 0.72), 0, 20)
+	status = text_label(notice_text if not notice_text.is_empty() else message, 60, y, 630, 43, 19)
+	band.visible = not status.text.is_empty()
+	status.set_meta("band", band)
 
 func dark_panel(x: float, y: float, width: float, height: float, border := Color(0.51, 0.4, 0.24), fill := Color(0.025, 0.04, 0.06, 0.92), border_width := 3, radius := 8) -> Panel:
 	var panel := Panel.new()
@@ -318,19 +381,26 @@ func art_any(names: Array, x: float, y: float, width: float) -> TextureRect:
 			return art(name, x, y, width)
 	return art(str(names.back()), x, y, width)
 
+## Bottom navigation on the framed bar; its four slots hold the icons (centres measured from the art).
 func nav() -> void:
 	var items := [["主页", 2], ["对局", 4], ["排行", 15], ["好友", 16]]
+	var bar := art("panel_bottom_nav", 20, 1160, 710)
+	var slots := [0.143, 0.382, 0.618, 0.857]
 	for i in items.size():
 		var item: Array = items[i]
-		var x := 50 + i * 168
+		var cx: float = bar.position.x + bar.size.x * slots[i]
 		var current := int(item[1]) == page_id
-		art(["home-icon", "invite-swords-icon", "leaderboard-icon", "friends-icon"][i], x + 38, 1162, 48)
-		text_label(str(item[0]), x, 1214, 125, 40, 19, HORIZONTAL_ALIGNMENT_CENTER, GOLD if current else Color(0.9, 0.85, 0.75))
-		# The whole icon + label block is the tap target.
+		if current:
+			dark_panel(cx - 60, 1175, 120, 60, GOLD, Color(0.3, 0.22, 0.05, 0.3), 2, 6)
+		var icon := art(["home-icon", "invite-swords-icon", "leaderboard-icon", "friends-icon"][i], cx - 17, 1176, 34)
+		if not current:
+			icon.modulate = Color(0.72, 0.72, 0.72)
+		text_label(str(item[0]), cx - 60, 1208, 120, 26, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if current else Color(0.86, 0.82, 0.72))
+		# The whole slot is the tap target.
 		var b := Button.new()
 		b.flat = true
-		b.position = Vector2(x, 1158)
-		b.size = Vector2(125, 105)
+		b.position = Vector2(cx - 80, 1160)
+		b.size = Vector2(160, 86)
 		if int(item[1]) == 15:
 			b.pressed.connect(AvalonApp.controller.open_leaderboard)
 		elif int(item[1]) == 16:
@@ -485,7 +555,7 @@ func chat_lines(top: float, limit: int, channel := "", line_height := 42.0) -> v
 	var lines: Array = model.chat.filter(func(entry): return channel.is_empty() or str(entry.get("channel", "all")) == channel)
 	lines = lines.slice(maxi(0, lines.size() - 40))
 	if lines.is_empty():
-		text_label("还没有人发言", 80, top, 590, line_height, 19, HORIZONTAL_ALIGNMENT_LEFT, Color(0.7, 0.65, 0.55))
+		text_label("还没有人发言", 80, top, 590, line_height, 19, HORIZONTAL_ALIGNMENT_LEFT, Color(0.82, 0.78, 0.68))
 		return
 	var rows: Array = []
 	for entry in lines:
@@ -569,7 +639,7 @@ func friends_page() -> void:
 	var tabs := [["好友 %d" % model.friends.size(), "friends"], [request_label, "requests"], ["最近同局", "recent"], ["找人", "search"]]
 	for i in tabs.size():
 		var key: String = tabs[i][1]
-		chip(tabs[i][0], 88 + i * 145, top + 5, 135, 56, func(): controller.friends_tab = key; _refresh(), controller.friends_tab == key)
+		tab(tabs[i][0], 40 + i * 170, top + 5, 160, 58, func(): controller.friends_tab = key; _refresh(), controller.friends_tab == key)
 	top += 75
 	var rows: Array = []
 	match controller.friends_tab:
@@ -661,12 +731,18 @@ func friend_rows(rows: Array, top: float, height: float) -> void:
 		item.add_child(state)
 		var actions: Array = row[2]
 		for i in actions.size():
+			var label := str(actions[i][0])
+			var ax := 538.0 - (actions.size() - i) * 92.0
+			ornate("button_small_action", ax, 16, 86, 46, item)
+			var icon_name := "chat-icon" if label.begins_with("私聊") else ("add-friend-icon" if label == "添加" else "")
+			if not icon_name.is_empty():
+				art(icon_name, ax + 8, 26, 26, item)
 			var action := Button.new()
-			action.text = str(actions[i][0])
-			action.position = Vector2(544 - (actions.size() - i) * 86, 14)
-			action.size = Vector2(78, 50)
-			action.add_theme_font_size_override("font_size", 19)
-			action.add_theme_color_override("font_color", RED if actions[i][0] == "删除" else GOLD)
+			action.text = label
+			action.position = Vector2(ax + (16 if not icon_name.is_empty() else 0), 14)
+			action.size = Vector2(86 - (16 if not icon_name.is_empty() else 0), 50)
+			action.add_theme_font_size_override("font_size", 18)
+			action.add_theme_color_override("font_color", RED if label == "删除" else GOLD)
 			action.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 			action.pressed.connect(actions[i][1])
 			item.add_child(action)
@@ -761,13 +837,14 @@ func build_page() -> void:
 	var controller: AvalonController = AvalonApp.controller
 	match page_id:
 		2:
-			art(model.avatar, 48, 30, 83)
-			text_label(model.nickname, 138, 35, 250, 40, 21, HORIZONTAL_ALIGNMENT_LEFT)
+			dark_panel(40, 26, 92, 92, GOLD, Color(0.02, 0.03, 0.05, 0.85), 3, 12)
+			art(model.avatar, 44, 30, 84)
+			text_label(model.nickname, 146, 35, 250, 40, 22, HORIZONTAL_ALIGNMENT_LEFT)
 			if not model.stats.is_empty():
 				var home_tier := T.tier_icon(str(model.stats.get("tier", "")))
 				if not home_tier.is_empty():
-					art(home_tier, 138, 70, 32)
-				text_label("%s · %d 分" % [model.stats.get("tier", ""), int(model.stats.get("rating", 0))], 138 if home_tier.is_empty() else 174, 72, 300, 30, 16, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+					art(home_tier, 146, 70, 32)
+				text_label("%s · %d 分" % [model.stats.get("tier", ""), int(model.stats.get("rating", 0))], 146 if home_tier.is_empty() else 182, 72, 300, 30, 16, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			var muted: bool = AvalonApp.profile.data.get("muted", false)
 			var sound := art("sound-icon", 566, 36, 48)
 			if muted:
@@ -800,27 +877,31 @@ func build_page() -> void:
 			state_line("本地练习可离线与 AI 对战，规则与联机相同")
 		3:
 			header("联机大厅", "选择人数后匹配或创建房间")
-			dark_panel(60, 180, 630, 1030)
-			text_label("服务器地址", 90, 200, 570, 40, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			line_edit("url", model.server_url, "ws://服务器地址:8888", 90, 245, 570, 56)
-			text_label("对局人数", 90, 320, 570, 40, 20, HORIZONTAL_ALIGNMENT_LEFT)
+			# Two groups: open a game (size, then match or create) and join a friend's room by code.
+			dark_panel(60, 185, 630, 560)
+			text_label("对局人数", 90, 205, 570, 40, 21, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			for i in 6:
 				var count := 5 + i
-				chip("%d人" % count, 90 + i * 96, 368, 86, 58, func(): controller.lobby_count = count; _refresh(), controller.lobby_count == count)
-			text_label("身份：%s\n特殊规则：%s" % [T.role_set_text(T.roles_for(controller.lobby_count)), T.rules_text(controller.lobby_count)], 90, 440, 570, 90, 18, HORIZONTAL_ALIGNMENT_LEFT)
-			button("快速匹配", 145, 555, 460, func(): controller.quick_match(field_text("url"), controller.lobby_count))
-			button("创建房间", 190, 665, 370, func(): controller.create_room(field_text("url"), controller.lobby_count), "button_secondary_dark")
-			text_label("加入好友的房间", 90, 780, 570, 40, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			line_edit("code", controller.invite_code, "输入 6 位房间号", 90, 828, 250, 56)
-			chip("粘贴", 352, 826, 106, 60, func():
+				chip("%d人" % count, 90 + i * 96, 252, 86, 58, func(): controller.lobby_count = count; _refresh(), controller.lobby_count == count)
+			text_label("身份：%s\n特殊规则：%s" % [T.role_set_text(T.roles_for(controller.lobby_count)), T.rules_text(controller.lobby_count)], 90, 322, 570, 90, 18, HORIZONTAL_ALIGNMENT_LEFT)
+			button("快速匹配", 145, 440, 460, func(): controller.quick_match(model.server_url, controller.lobby_count))
+			button("创建房间", 190, 560, 370, func(): controller.create_room(model.server_url, controller.lobby_count), "button_secondary_dark")
+			text_label("快速匹配进入公开房间；创建房间会得到 6 位房间号", 90, 670, 570, 50, 17, HORIZONTAL_ALIGNMENT_CENTER, Color(0.78, 0.74, 0.64))
+			dark_panel(60, 775, 630, 180)
+			text_label("加入好友的房间", 90, 795, 570, 40, 21, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+			line_edit("code", controller.invite_code, "输入 6 位房间号", 90, 852, 250, 60)
+			chip("粘贴", 352, 852, 106, 60, func():
 				var pasted := controller.paste_invite()
 				if not pasted.is_empty():
 					(inputs["code"] as LineEdit).text = pasted)
-			chip("加入", 470, 826, 190, 60, func(): controller.join_room_code(field_text("url"), field_text("code")))
+			chip("加入", 470, 852, 190, 60, func(): controller.join_room_code(model.server_url, field_text("code")), true)
 			button("返回主界面", 220, 1000, 310, func(): controller.show_page(2), "button_secondary_dark")
-			state_line("连接状态：%s" % model.connection)
+			state_line("服务器：%s" % controller.connection_text())
 		4:
-			header("房间 " + model.room_id, "%d人局 · %s" % [model.target_players, "公开匹配" if model.is_public else ("私人房间" if model.mode != "local_demo" else "本地练习")])
+			if model.mode == "local_demo":
+				header("本地练习", "%d人局 · 与 AI 对战" % model.players.size())
+			else:
+				header("房间 " + model.room_id, "%d人局 · %s" % [model.target_players, "公开匹配" if model.is_public else "私人房间"])
 			seats()
 			if model.mode == "network":
 				chip("好友列表", 35, 180, 170, 52, controller.open_friends.bind("friends"))
@@ -857,9 +938,7 @@ func build_page() -> void:
 		6:
 			header("你的身份")
 			art("card_role_front", 130, 220, 490)
-			var badges := {T.Role.MERLIN:"role-merlin", T.Role.PERCIVAL:"role-percival", T.Role.SERVANT:"role-servant", T.Role.ASSASSIN:"role-assassin",
-				T.Role.MORGANA:"role-morgana", T.Role.MINION:"role-minion", T.Role.OBERON:"role-oberon", T.Role.MORDRED:"role-mordred"}
-			art(str(badges.get(model.my_role, "avatar-empty-slot")), 275, 320, 200)
+			art(str(ROLE_ART.get(model.my_role, "avatar-empty-slot")), 275, 320, 200)
 			text_label(T.role_name(model.my_role) + ("（坏人阵营）" if T.is_bad_role(model.my_role) else "（好人阵营）"), 140, 635, 470, 65, 34)
 			text_label(identity_hint(), 165, 708, 420, 112, 20)
 			text_label("请记住你的身份，不要向其他玩家展示", 110, 830, 530, 50, 20)
@@ -904,8 +983,9 @@ func build_page() -> void:
 				dark_panel(60, 850, 630, 262)
 				chat_lines(860, 6, "", 40.0)
 			if model.is_captain():
-				button("清空选择", 74, 1025, 274, func(): controller.team_choice.clear(); controller.excalibur_choice = -1; _refresh(), "button_secondary_dark")
-				button("确认队伍", 394, 1025, 274, func(): controller.submit_team())
+				button("确认队伍", 165, 1015, 420, func(): controller.submit_team())
+				if not controller.team_choice.is_empty():
+					chip("清空选择", 290, 1124, 170, 52, func(): controller.team_choice.clear(); controller.excalibur_choice = -1; _refresh())
 			state_line(("点击头像选择队员" + ("，再选王者之剑持有者" if excalibur else "")) if model.is_captain() else "等待队长选择队员")
 		9:
 			header("全员投票")
@@ -918,11 +998,25 @@ func build_page() -> void:
 			if model.excalibur_seat >= 0:
 				art_any(["excalibur-icon", "invite-swords-icon"], 150, 572, 34)
 				text_label("王者之剑：%s" % seat_names([model.excalibur_seat]), 190, 570, 440, 40, 21, HORIZONTAL_ALIGNMENT_LEFT)
-			art("thumbs-approve-icon", 169, 735, 130)
-			art("thumbs-reject-icon", 458, 735, 130)
-			if not model.voted:
-				button("赞成", 85, 900, 280, func(): controller.vote(true))
-				button("反对", 385, 900, 280, func(): controller.vote(false), "button_danger_red")
+			# Each choice is one big target: the emblem and its button together.
+			for side in 2:
+				var approve := side == 0
+				var left := 60.0 + side * 330.0
+				var emblem := art_any(["vote-approve-emblem" if approve else "vote-reject-emblem", "thumbs-approve-icon" if approve else "thumbs-reject-icon"], left + 45, 770, 210)
+				if model.voted:
+					emblem.modulate = Color(0.55, 0.55, 0.55)
+					continue
+				button("赞成" if approve else "反对", left, 995, 300, func(): controller.vote(approve), "button_primary_blue" if approve else "button_danger_red")
+				var hit := Button.new()
+				hit.flat = true
+				hit.position = Vector2(left, 760)
+				hit.size = Vector2(300, 230)
+				hit.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
+				hit.pressed.connect(func(): controller.vote(approve))
+				layer.add_child(hit)
+			if model.voted:
+				strip(1005, 60)
+				text_label("已投票，等待其他玩家", 60, 1005, 630, 60, 24, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 			state_line("已投票，等待其他玩家" if model.voted else "请投票决定是否执行任务")
 		10:
 			if model.stage == T.Stage.EXCALIBUR:
@@ -953,8 +1047,10 @@ func build_page() -> void:
 					text_label("王者之剑：%s（出牌后可翻转一名队员的牌）" % seat_names([model.excalibur_seat]), 60, 386, 630, 46, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 				strip(500, 80)
 				text_label("你是任务队员，请出牌" if model.is_member() and not model.acted else ("等待任务队员行动" if not model.is_member() else "已出牌"), 60, 500, 630, 80, 32)
-				art("mission-success-emblem", 150, 640, 150)
-				art("mission-failure-emblem", 450, 640, 150)
+				var playing := model.is_member() and not model.acted
+				for emblem in [art("mission-success-emblem", 150, 640, 150), art("mission-failure-emblem", 450, 640, 150)]:
+					if not playing:
+						emblem.modulate = Color(1, 1, 1, 0.35)
 				if model.is_member() and not model.acted:
 					button("任务成功", 80, 875, 285, func(): controller.mission(true))
 					if T.is_bad_role(model.my_role):
@@ -1017,7 +1113,7 @@ func build_page() -> void:
 				headline += "  ·  你%s" % ("赢了" if won else "输了")
 			var good_won: bool = fr.get("winner") == true
 			text_label(headline, 60, 180, 630, 80, 40, HORIZONTAL_ALIGNMENT_CENTER, BLUE if good_won else RED)
-			text_label(str(fr.get("reason", "")), 80, 260, 590, 60, 21)
+			text_label(str(fr.get("reason", "")).replace("AI_", ""), 80, 260, 590, 60, 21)
 			if not model.last_rating.is_empty() and model.mode == "network":
 				var delta := int(model.last_rating.get("delta", 0))
 				var end_tier := T.tier_icon(str(model.last_rating.get("tier", "")))
@@ -1032,7 +1128,10 @@ func build_page() -> void:
 				var mine_row := i == int(fr.get("me", -1))
 				var tag := "（你）" if mine_row else (" · AI" if player.get("isAi", false) else "")
 				var role := int(player.get("role", 0))
-				text_label("%d. %s  %s%s" % [i + 1, display_name(str(player.get("nickname", "玩家"))).left(7), T.role_name(role), tag], 180, 440 + i * row, 400, row - 4, 21, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else BLUE)
+				var row_y := 440 + i * row
+				if ROLE_ART.has(role):
+					art(ROLE_ART[role], 166, row_y + (row - 4) / 2.0 - 25, 50)
+				text_label("%d. %s  %s%s" % [i + 1, display_name(str(player.get("nickname", "玩家"))).left(7), T.role_name(role), tag], 220, row_y, 380, row - 4, 21, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else BLUE)
 			# Buttons sit below the roster panel (which ends near y 1075), in two rows.
 			button("再来一局", 90, 1092, 275, func(): controller.play_again())
 			button("查看复盘", 385, 1092, 275, func(): controller.show_final_replay(), "button_secondary_dark")
@@ -1050,7 +1149,7 @@ func build_page() -> void:
 			else:
 				var fr: Dictionary = model.final_result if not model.final_result.is_empty() else model.snapshot()
 				var results: Array = fr.get("results", [])
-				var lines: Array = [["完成 %d 轮任务：成功 %d 次，失败 %d 次" % [results.size(), results.count(true), results.count(false)], GOLD], "结论：" + str(fr.get("reason", ""))]
+				var lines: Array = [["完成 %d 轮任务：成功 %d 次，失败 %d 次" % [results.size(), results.count(true), results.count(false)], GOLD], "结论：" + str(fr.get("reason", "")).replace("AI_", "")]
 				for event in Array(fr.get("history", [])).filter(func(event): return int(event.get("route", 0)) in [402, 502, 602, 903, 906, 702]):
 					lines.append(history_text(event))
 				scroll_lines(lines, 145, 290, 470, 760)
@@ -1062,7 +1161,7 @@ func build_page() -> void:
 			var tabs := [["全服排行", "board"], ["好友排行", "friends"], ["我的战绩", "history"], ["本机记录", "local"]]
 			for i in tabs.size():
 				var key: String = tabs[i][1]
-				chip(tabs[i][0], 88 + i * 145, 180, 135, 56, func(): controller.board_tab = key; controller.open_leaderboard(), controller.board_tab == key)
+				tab(tabs[i][0], 40 + i * 170, 180, 160, 58, func(): controller.board_tab = key; controller.open_leaderboard(), controller.board_tab == key)
 			art("panel_content_large", 103, 250, 545)
 			var tab: String = controller.board_tab
 			if tab != "local" and not controller.is_online():
@@ -1097,7 +1196,7 @@ func build_page() -> void:
 					var outcome := "胜利" if won_match == true else "失败" if won_match == false else ("好人胜" if match_data.get("winner", false) else "坏人胜")
 					var when := str(match_data.get("time", "")).left(16).replace("T", " ")
 					var size_text := "%d人" % Array(match_data.get("players", [])).size()
-					rows.append(["%s · %s%s · %s\n%s%s" % [outcome, size_text, "联机" if match_data.get("mode") == "network" else "练习", T.role_name(int(match_data.get("role", 0))), when + "  " if not when.is_empty() else "", str(match_data.get("reason", ""))],
+					rows.append(["%s · %s%s · %s\n%s%s" % [outcome, size_text, "联机" if match_data.get("mode") == "network" else "练习", T.role_name(int(match_data.get("role", 0))), when + "  " if not when.is_empty() else "", str(match_data.get("reason", "")).replace("AI_", "")],
 						Color(0.6, 0.9, 0.6) if won_match == true else (Color(0.95, 0.65, 0.6) if won_match == false else Color(0.95, 0.9, 0.78))])
 				if rows.is_empty():
 					rows = ["暂无对局记录"]
@@ -1159,6 +1258,8 @@ func build_page() -> void:
 			chip("全部静音" if muted else "声音开启", 200, 785, 150, 58, func(): controller.set_muted(not muted), muted)
 			chip("音乐 开" if music_on else "音乐 关", 365, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.MUSIC_BUS, not music_on), not music_on)
 			chip("音效 开" if sfx_on else "音效 关", 520, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.SFX_BUS, not sfx_on), not sfx_on)
-			button("保存", 195, 900, 360, func(): if controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
+			text_label("服务器", 90, 862, 100, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
+			line_edit("url", model.server_url, "ws://服务器地址:8888", 200, 858, 460, 56)
+			button("保存", 195, 945, 360, func(): if controller.set_server_url(field_text("url")) and controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
 			button("返回", 220, 1110, 310, func(): controller.show_page(2), "button_secondary_dark")
 			state_line("修改会在下次进入房间时生效")

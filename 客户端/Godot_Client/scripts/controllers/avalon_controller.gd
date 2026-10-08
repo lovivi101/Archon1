@@ -151,6 +151,23 @@ func save_profile(nickname: String, avatar: String) -> bool:
 	model.changed.emit()
 	return true
 
+## Server address from the settings page; used by the lobby's match, create and join.
+func set_server_url(url: String) -> bool:
+	var normalized := url.strip_edges()
+	if normalized == model.server_url:
+		return true
+	if not normalized.begins_with("ws://") and not normalized.begins_with("wss://"):
+		notice.emit("服务器地址需以 ws:// 或 wss:// 开头")
+		return false
+	model.server_url = normalized
+	profile.data.url = normalized
+	profile.save()
+	return true
+
+## Connection state for players: 未连接 / 连接中 / 已连接 / 连接失败.
+func connection_text() -> String:
+	return {"open": "已连接", "connecting": "连接中", "error": "连接失败"}.get(model.connection, "未连接")
+
 func set_muted(muted: bool) -> void:
 	AudioServer.set_bus_mute(0, muted)
 	profile.data.muted = muted
