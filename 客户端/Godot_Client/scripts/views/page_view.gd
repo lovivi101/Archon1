@@ -26,7 +26,14 @@ const TRACK_X := 95.0
 const TRACK_Y := 206.0
 const TRACK_WIDTH := 560.0
 
+## Ten seats on the ellipse leave the two side pairs touching, so they sit on a stadium instead:
+## three across the top (seat 1 in the middle), two down each side and three across the bottom.
+const TEN_SEATS := [Vector2(375, 380), Vector2(535, 380), Vector2(640, 480), Vector2(640, 600), Vector2(535, 700),
+	Vector2(375, 700), Vector2(215, 700), Vector2(110, 600), Vector2(110, 480), Vector2(215, 380)]
+
 static func seat_position(index: int, count: int) -> Vector2:
+	if count == 10:
+		return TEN_SEATS[index]
 	var angle := -PI / 2.0 + TAU * float(index) / float(maxi(count, 1))
 	return SEAT_CENTER + Vector2(cos(angle) * SEAT_RADIUS.x, sin(angle) * SEAT_RADIUS.y)
 
@@ -165,6 +172,18 @@ func share_result() -> void:
 		hint.text = share.share_card(image, data, rect, saved))
 	button("关闭", 380, 930, 280, close_share_preview, "button_secondary_dark")
 	layer = page_layer
+
+## A modal text box, like the login page's documents.
+func show_info(title: String, text: String) -> void:
+	var dialog := AcceptDialog.new()
+	dialog.title = title
+	dialog.dialog_text = text
+	dialog.dialog_autowrap = true
+	dialog.ok_button_text = "知道了"
+	add_child(dialog)
+	dialog.confirmed.connect(dialog.queue_free)
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered(Vector2i(620, 360))
 
 func close_share_preview() -> void:
 	var overlay := get_node_or_null("SharePreview")
@@ -409,21 +428,25 @@ func nav() -> void:
 			b.pressed.connect(AvalonApp.controller.show_page.bind(int(item[1])))
 		layer.add_child(b)
 
+## The avatar art for a seat: the player's pick, or one by seat number; an empty slot for no player.
+func avatar_name(seat: int) -> String:
+	var model: AvalonModel = AvalonApp.model
+	var avatars: Array = AvalonController.AVATARS
+	if seat < 0 or seat >= model.players.size():
+		return "avatar-empty-slot"
+	var chosen := str(model.players[seat].get("avatar", ""))
+	return chosen if chosen in avatars else avatars[seat % avatars.size()]
+
 ## Avatar with its name plate (seat number and name; gold for me, red border once revealed as evil).
 ## (x, y) is the avatar's top-left corner.
 func player_avatar(seat: int, x: float, y: float, width := 83.0) -> void:
 	var model: AvalonModel = AvalonApp.model
-	var avatars: Array = AvalonController.AVATARS
-	var name := "avatar-empty-slot"
-	if seat >= 0 and seat < model.players.size():
-		var chosen := str(model.players[seat].get("avatar", ""))
-		name = chosen if chosen in avatars else avatars[seat % avatars.size()]
-	var avatar := art(name, x, y, width)
-	var plate_width := width + 34.0
+	var avatar := art(avatar_name(seat), x, y, width)
+	var plate_width := maxf(width + 34.0, 112.0)
 	var plate_x := x + width / 2.0 - plate_width / 2.0
 	if seat < 0 or seat >= model.players.size():
-		dark_panel(plate_x, y + width + 2, plate_width, 26, Color(0.35, 0.3, 0.22), Color(0.02, 0.03, 0.05, 0.6), 1, 6)
-		text_label("%d 空位" % (seat + 1) if seat >= 0 else "空位", plate_x, y + width + 1, plate_width, 28, 16, HORIZONTAL_ALIGNMENT_CENTER, Color(0.65, 0.62, 0.55))
+		dark_panel(plate_x, y + width + 2, plate_width, 28, Color(0.35, 0.3, 0.22), Color(0.02, 0.03, 0.05, 0.6), 1, 6)
+		text_label("%d 空位" % (seat + 1) if seat >= 0 else "空位", plate_x, y + width + 1, plate_width, 30, 18, HORIZONTAL_ALIGNMENT_CENTER, Color(0.65, 0.62, 0.55))
 		return
 	var p: Dictionary = model.players[seat]
 	var mine := seat == model.my_seat()
@@ -432,9 +455,9 @@ func player_avatar(seat: int, x: float, y: float, width := 83.0) -> void:
 	if not online:
 		avatar.modulate = Color(0.45, 0.45, 0.45)
 	var border := RED if evil else (GOLD if mine else Color(0.45, 0.38, 0.26))
-	dark_panel(plate_x, y + width + 2, plate_width, 26, border, Color(0.02, 0.03, 0.05, 0.85), 2 if mine or evil else 1, 6)
+	dark_panel(plate_x, y + width + 2, plate_width, 28, border, Color(0.02, 0.03, 0.05, 0.85), 2 if mine or evil else 1, 6)
 	var label := "%d %s" % [seat + 1, display_name(str(p.get("nickname", "玩家"))).left(4 if width < 80.0 else 5)]
-	text_label(label if online else "%d 离线" % (seat + 1), plate_x, y + width + 1, plate_width, 28, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if mine else Color(0.95, 0.9, 0.8))
+	text_label(label if online else "%d 离线" % (seat + 1), plate_x, y + width + 1, plate_width, 30, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD if mine else Color(0.95, 0.9, 0.8))
 	if not online and ResourceLoader.exists("res://assets/ui/badge-offline.png"):
 		art("badge-offline", x - 6, y - 6, 30)
 	elif bool(p.get("isAi", false)):
@@ -458,7 +481,8 @@ func seats(interactive := false) -> void:
 		var x := center.x - half
 		var y := center.y - half
 		var speaking := model.stage == T.Stage.SPEAKING and i == model.speaker_seat
-		var picked: bool = i in model.selected_seats or i in controller.team_choice
+		# During the assassination the last team no longer matters; gold marks only the assassin's pick.
+		var picked: bool = (i in model.selected_seats and model.stage != T.Stage.ASSASSINATING) or i in controller.team_choice
 		var ring := BLUE if speaking else (GOLD if picked else (RED if i in model.revealed_evil else Color(0, 0, 0, 0)))
 		if ring.a > 0.0:
 			dark_panel(x - 5, y - 5, size + 10, size + 10, ring, Color(ring.r, ring.g, ring.b, 0.18), 4, 14)
@@ -549,13 +573,14 @@ func identity_hint() -> String:
 	return "你没有夜间信息，请通过发言和投票找出坏人"
 
 ## Chat (optionally one channel) in a scrolling box `limit` lines tall from `top`, pinned to the newest
-## message; long messages wrap instead of running into the next line.
-func chat_lines(top: float, limit: int, channel := "", line_height := 42.0) -> void:
+## message; long messages wrap instead of running into the next line. `empty` replaces the default
+## placeholder when there is nothing yet.
+func chat_lines(top: float, limit: int, channel := "", line_height := 42.0, empty := "") -> void:
 	var model: AvalonModel = AvalonApp.model
 	var lines: Array = model.chat.filter(func(entry): return channel.is_empty() or str(entry.get("channel", "all")) == channel)
 	lines = lines.slice(maxi(0, lines.size() - 40))
 	if lines.is_empty():
-		text_label("还没有人发言", 80, top, 590, line_height, 19, HORIZONTAL_ALIGNMENT_LEFT, Color(0.82, 0.78, 0.68))
+		text_label(empty if not empty.is_empty() else "还没有人发言", 80, top, 590, line_height, 19, HORIZONTAL_ALIGNMENT_LEFT, Color(0.82, 0.78, 0.68))
 		return
 	var rows: Array = []
 	for entry in lines:
@@ -906,15 +931,21 @@ func build_page() -> void:
 			if model.mode == "network":
 				chip("好友列表", 35, 180, 170, 52, controller.open_friends.bind("friends"))
 				chip("邀请好友", 545, 180, 170, 52, controller.share_invite)
-			dark_panel(80, 790, 590, 400)
+			dark_panel(80, 790, 590, 370)
 			var ready_count := model.players.filter(func(p): return bool(p.get("isReady", false))).size()
 			var seat_total := model.target_players if model.mode != "local_demo" else model.players.size()
 			text_label("%d / %d 人，%d 人已准备" % [model.players.size(), seat_total, ready_count], 100, 805, 550, 46, 27)
-			text_label(room_rules_text() + ("\n空位在开局时由 AI 补齐" if model.mode != "local_demo" else ""), 110, 855, 530, 110, 18, HORIZONTAL_ALIGNMENT_LEFT)
+			# Rules in one line; the full role list and special rules open in a dialog.
+			var roles: Array = model.role_set if not model.role_set.is_empty() else T.roles_for(model.target_players)
+			var evil_count := roles.filter(func(role): return T.is_bad_role(int(role))).size()
+			text_label("好人 %d · 坏人 %d" % [roles.size() - evil_count, evil_count], 110, 858, 330, 50, 22, HORIZONTAL_ALIGNMENT_LEFT)
+			chip("规则详情", 470, 858, 170, 50, func(): show_info("本局规则", room_rules_text()))
+			if model.mode != "local_demo":
+				text_label("空位在开局时由 AI 补齐", 110, 912, 530, 36, 17, HORIZONTAL_ALIGNMENT_LEFT, Color(0.78, 0.74, 0.64))
 			var me := model.my_seat()
 			var i_am_ready: bool = me >= 0 and me < model.players.size() and bool(model.players[me].get("isReady", false))
-			button("取消准备" if i_am_ready and model.mode != "local_demo" else "准备", 165, 975, 420, func(): controller.toggle_ready())
-			button("退出房间", 220, 1085, 310, func(): controller.leave_room(), "button_secondary_dark")
+			button("取消准备" if i_am_ready and model.mode != "local_demo" else "准备", 165, 955, 420, func(): controller.toggle_ready())
+			button("退出房间", 220, 1060, 310, func(): controller.leave_room(), "button_secondary_dark")
 			if model.mode == "local_demo":
 				state_line("本地对局：其余席位由 AI 控制")
 			elif not model.is_public:
@@ -948,8 +979,20 @@ func build_page() -> void:
 			header("第 %d 轮 发言" % model.round, "队长先发言，然后按座位顺序")
 			progress()
 			seats()
+			# The panel's header says who holds the floor, with their avatar.
 			dark_panel(60, 780, 630, 262)
-			chat_lines(790, 6, "", 40.0)
+			var speaking := model.stage == T.Stage.SPEAKING and model.speaker_seat >= 0
+			if speaking:
+				art(avatar_name(model.speaker_seat), 78, 786, 40)
+				art("microphone-icon", 104, 806, 24)
+			var floor_text := ("轮到你发言" if model.is_speaker() else "正在发言：%s" % seat_names([model.speaker_seat])) if speaking else "本轮发言"
+			text_label(floor_text, 136 if speaking else 80, 786, 540, 40, 22, HORIZONTAL_ALIGNMENT_LEFT, GOLD if speaking and model.is_speaker() else BLUE)
+			var rule := ColorRect.new()
+			rule.color = Color(0.51, 0.4, 0.24, 0.7)
+			rule.position = Vector2(76, 832)
+			rule.size = Vector2(598, 1)
+			layer.add_child(rule)
+			chat_lines(842, 5, "", 38.0, ("等待 %d 号开始发言" % (model.speaker_seat + 1)) if speaking and not model.is_speaker() else "")
 			if model.stage == T.Stage.SPEAKING:
 				if model.is_speaker():
 					line_edit("chat", "", "说说你的看法（最多80字）", 60, 1052, 440, 58)
@@ -957,8 +1000,6 @@ func build_page() -> void:
 					button("结束发言", 195, 1126, 360, func(): controller.end_speech())
 					state_line("轮到你发言了")
 				else:
-					strip(1058, 56)
-					text_label("正在发言：%s" % seat_names([model.speaker_seat]), 60, 1061, 630, 50, 23, HORIZONTAL_ALIGNMENT_CENTER, BLUE)
 					state_line("等待其他玩家发言")
 			else:
 				if model.stage == T.Stage.PROPOSING:
@@ -1074,8 +1115,25 @@ func build_page() -> void:
 				var rejections: Array = []
 				for i in model.last_votes.size():
 					(approvals if model.last_votes[i] else rejections).append(i)
-				text_label("赞成（%d）：%s" % [approvals.size(), seat_numbers(approvals)], 90, 745, 570, 80, 22, HORIZONTAL_ALIGNMENT_LEFT, Color(0.6, 0.9, 0.6))
-				text_label("反对（%d）：%s" % [rejections.size(), seat_numbers(rejections)], 90, 835, 570, 80, 22, HORIZONTAL_ALIGNMENT_LEFT, Color(0.95, 0.6, 0.55))
+				# Two columns of small avatars, five to a row: approvals left in blue, rejections right in red.
+				var divider := ColorRect.new()
+				divider.color = Color(0.51, 0.4, 0.24, 0.7)
+				divider.position = Vector2(375, 740)
+				divider.size = Vector2(1, 210)
+				layer.add_child(divider)
+				for side in 2:
+					var voters: Array = approvals if side == 0 else rejections
+					var left := 80.0 + side * 310.0
+					var color := BLUE if side == 0 else RED
+					text_label("%s（%d）" % ["赞成" if side == 0 else "反对", voters.size()], left, 732, 290, 40, 22, HORIZONTAL_ALIGNMENT_CENTER, color)
+					if voters.is_empty():
+						text_label("无", left, 800, 290, 40, 20, HORIZONTAL_ALIGNMENT_CENTER, Color(0.65, 0.62, 0.55))
+					for i in voters.size():
+						var seat: int = voters[i]
+						var x := left + (i % 5) * 58.0
+						var y := 778.0 + (i / 5) * 76.0
+						art(avatar_name(seat), x + 5, y, 48)
+						text_label("%d号" % (seat + 1), x, y + 48, 58, 24, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if seat == model.my_seat() else color)
 			elif not model.last_excalibur.is_empty():
 				var target := int(model.last_excalibur.get("targetSeat", -1))
 				var holder := int(model.last_excalibur.get("holderSeat", -1))
@@ -1089,7 +1147,12 @@ func build_page() -> void:
 			var is_evil := T.is_bad_role(model.my_role)
 			seats(is_assassin)
 			strip(772, 52)
-			text_label("坏人：" + seat_names(model.revealed_evil), 60, 772, 630, 52, 20, HORIZONTAL_ALIGNMENT_CENTER, RED)
+			# Legend for the seat rings: red for revealed evil, gold for the assassin's pick.
+			dark_panel(76, 786, 24, 24, RED, Color(RED.r, RED.g, RED.b, 0.18), 3, 5)
+			text_label("红框：坏人（%s）" % seat_numbers(model.revealed_evil), 108, 772, 300 if is_assassin else 560, 52, 19, HORIZONTAL_ALIGNMENT_LEFT, RED)
+			if is_assassin:
+				dark_panel(430, 786, 24, 24, GOLD, Color(GOLD.r, GOLD.g, GOLD.b, 0.18), 3, 5)
+				text_label("金框：刺杀目标", 462, 772, 220, 52, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			if is_evil:
 				dark_panel(60, 832, 630, 172)
 				chat_lines(840, 4, "evil", 40.0)
@@ -1255,9 +1318,10 @@ func build_page() -> void:
 			var music_on: bool = AvalonApp.profile.data.get("music_on", true)
 			var sfx_on: bool = AvalonApp.profile.data.get("sfx_on", true)
 			text_label("声音", 90, 790, 120, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			chip("全部静音" if muted else "声音开启", 200, 785, 150, 58, func(): controller.set_muted(not muted), muted)
-			chip("音乐 开" if music_on else "音乐 关", 365, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.MUSIC_BUS, not music_on), not music_on)
-			chip("音效 开" if sfx_on else "音效 关", 520, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.SFX_BUS, not sfx_on), not sfx_on)
+			# Same wording on all three; a highlighted switch is on.
+			chip("总音量 " + ("关" if muted else "开"), 200, 785, 150, 58, func(): controller.set_muted(not muted), not muted)
+			chip("音乐 " + ("开" if music_on else "关"), 365, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.MUSIC_BUS, not music_on), music_on)
+			chip("音效 " + ("开" if sfx_on else "关"), 520, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.SFX_BUS, not sfx_on), sfx_on)
 			text_label("服务器", 90, 862, 100, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
 			line_edit("url", model.server_url, "ws://服务器地址:8888", 200, 858, 460, 56)
 			button("保存", 195, 945, 360, func(): if controller.set_server_url(field_text("url")) and controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
