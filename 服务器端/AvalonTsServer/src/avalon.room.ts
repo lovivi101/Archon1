@@ -369,6 +369,17 @@ export class AvalonRoom {
 
     // ---- views ----
 
+    /** Seats that must act now, in the same order used by tick(). */
+    public pendingSeats(): number[] {
+        return this.pendingActors().map((player) => player.seatIndex);
+    }
+
+    /** A detached copy of exactly the knowledge available to this seat's built-in AI. */
+    public viewOf(seat: number): AiView {
+        if (!Number.isInteger(seat) || !this.players[seat]) throw new RoomError(ErrorCode.NotFound, "座位不存在");
+        return structuredClone(this.viewFor(this.players[seat]));
+    }
+
     public snapshot(): Record<string, unknown> {
         return {
             roomId: this.id,

@@ -141,6 +141,37 @@ docker compose down
 
 Compose 以 `NODE_ENV=production` 运行，因此 `.env` 必须设置 `AVALON_TOKEN_SECRET`，并且默认关闭旧版 `userId` 登录。Godot 客户端接入令牌登录之前如需在自己的服务器上联调，可临时设置 `AVALON_ALLOW_LEGACY_LOGIN=1`，**不要在公网服务器上开启**。房间、身份、对局进度依旧在进程内存中，重启会丢失，当前只能运行单个服务实例；要上线多人/多副本，还需实现房间持久化或共享状态、备份、TLS/WSS、反向代理。请不要用 `docker compose down -v`，那会删除数据库卷。
 
+## LLM 玩家与竞技场
+
+竞技场直接驱动房间状态机，不启动 WebSocket 服务。LLM 座位作为普通玩家加入，其余座位由房间补成内置 AI；规则、线上服务和客户端不变。需要支持内置 `fetch` 的 Node.js（项目使用 Node 22）。
+
+| 环境变量 | 默认值 / 行为 |
+|---|---|
+| `AVALON_LLM_PROVIDER` | `deepseek`，预设地址 `https://api.deepseek.com`、模型 `deepseek-chat` |
+| `AVALON_LLM_BASE_URL` | 覆盖预设地址；调用时追加 `/chat/completions` |
+| `AVALON_LLM_MODEL` | 覆盖模型；其他 provider 必须同时配置地址和模型 |
+| `AVALON_LLM_API_KEY` | 优先使用非空值；不在日志中输出 |
+| `AVALON_LLM_KEY_FILE` | API_KEY 为空时读取；支持文件只含 key 或一行 `key = xxx`；文件请保存在仓库之外 |
+
+Git Bash 示例（自行将凭据放入本地文件，不要将 key 写进命令或提交到仓库）：
+
+```bash
+export AVALON_LLM_KEY_FILE='C:/Users/Administrator/.config/avalon/llm-key.txt'
+npm run arena -- --games 1 --players 5 --llm-seats all --seed 1 --out logs/arena --speech 1
+# 混合对局，关闭 LLM 发言以减少调用：
+npm run arena -- --games 2 --players 7 --llm-seats 0,2,4 --seed 1 --speech 0
+```
+
+`--llm-seats` 使用从 0 开始的内部座位索引。`join()` 顺序分配座位，因此指定的 LLM 座位按列表顺序重编号为 `0..k-1`：例如 `0,2,4` 实际是 `0,1,2`（界面显示为 1、2、3 号），其他座位都是 AI。每局 JSONL 首行及最终汇总的 `seatMapping` 都记录请求索引与实际索引。对模型的提示、视野、历史、候选、事实和 JSON 的 `team` / `target` 全部使用从 1 开始的显示号码，与游戏界面一致。Agent 校验号码在 `1..人数` 范围内后减 1，`Decision.value` 中的座位仍为内部 `seatIndex`，回退 AI 的座位结果不换算。真人、内置 AI 和 LLM 的发言均使用显示号码；提示只补全昵称，不改数字，回退发言使用内置 AI 原文（去换行、最多 80 字）。
+
+JSONL 首行的 `seatNumbering` 明确约定：`seatIndexBase: 0`、`speechSeatBase: 1`、`modelSeatBase: 1`。`seatMapping.requested/actual`、`actualLlmSeats`、`heuristicSeats`、动作的 `seat`，以及 `propose`、`assassinate`、`excaliburHolder`、`excaliburTarget`、`ladyTarget` 的 `value` 均为从 0 开始的内部索引（王者之剑 `-1` 仍表示不使用）。发言、理由和结果描述里的号码为从 1 开始的显示号码，日志不转换发言数字。
+
+默认每次请求超时 20 秒；429、5xx、网络 TypeError 最多重试 2 次，退避 100/200 毫秒。超时、调用失败或非法 JSON 决策回退到内置 AI；好人失败牌、重复/越界队伍和刺杀同伴均会拒绝。王者之剑和湖中仙女始终用启发式策略，记录 `provider: "heuristic"`。`--speech 0` 只跳过 LLM 发言，AI 仍照常发言。
+
+每局日志为 `<out>/<时间戳>-g<序号>.jsonl`（时间戳附进程号避免冲突，默认 `logs/arena/`，`logs/` 已忽略）。首行为配置及座位映射，中间为决策，末行为结果。决策含身份（供离线复盘，不进入其他玩家提示）、动作、值、理由/发言、耗时、token 和回退原因。最后控制台输出 JSON 汇总：`goodWins/evilWins`、`assassinationHits/assassinations/assassinationHitRate`、`llmCalls`、`fallbacks`、`tokens`、`averageStepMs`。`llmCalls` 是逻辑决策调用次数，不含 HTTP 重试；token 累计服务实际返回的 usage（缺失 usage 或请求未返回时无法估计消耗）。平均耗时按全部记录动作计算，内置 AI 自动动作记 0 ms，LLM 决策包含重试与回退耗时。
+
+费用估算方法：全 LLM 的 N 人局，P 次提案、M 次实际任务，开启发言时调用数为 `P × (2N + 1) + 各任务队伍人数之和 + A`，A 在进入刺杀时为 1，否则为 0。关闭发言改为 `P × (N + 1) + 队伍人数之和 + A`。例如 5 人局、没有否决、打满 5 轮：开启发言 68～69 次，关闭为 43～44 次；每次否决额外增加 11 或 6 次。混合局按实际 LLM 发言、队长、投票、任务成员、刺客分别计数。假设每次输入 2000、输出 100 tokens，则约 69 次对应 13.8 万输入、6900 输出 tokens；这只是预算假设，历史增长会增加输入量。金额用 `输入 tokens/百万 × 输入单价 + 输出 tokens/百万 × 输出单价` 计算，单价取所用服务账单价格，重试可能增加费用。
+
 ## 测试
 
 ```powershell
