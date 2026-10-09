@@ -660,7 +660,8 @@ func friends_page() -> void:
 		# A gold-framed banner: it needs an answer, unlike the rest of the page.
 		dark_panel(40, top, 670, 64, GOLD, Color(0.16, 0.12, 0.05, 0.96), 2, 10)
 		art("invite-swords-icon", 50, top + 10, 44)
-		text_label("%s 邀请你加入 %d 人局（房间 %s）" % [str(invite.get("nickname", "好友")).left(8), int(invite.get("playerCount", 5)), invite.get("roomId", "")], 102, top + 4, 355, 56, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+		text_label("%s 邀请你" % display_name(str(invite.get("nickname", "好友"))).left(8), 102, top + 4, 355, 30, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+		text_label("%d 人局 · 房间 %s" % [int(invite.get("playerCount", 5)), invite.get("roomId", "")], 102, top + 32, 355, 26, 16, HORIZONTAL_ALIGNMENT_LEFT, Color(0.85, 0.8, 0.7))
 		chip("加入", 465, top + 6, 110, 52, controller.accept_room_invite, true)
 		chip("忽略", 585, top + 6, 110, 52, controller.dismiss_room_invite)
 		top += 74
@@ -699,7 +700,10 @@ func friends_page() -> void:
 					actions.append(["添加", controller.request_friend.bind(id)])
 				rows.append([entry, state, actions])
 			if rows.is_empty():
-				text_label("按昵称搜索玩家，或输入对方的 ID" if controller.friends_tab == "search" else "和其他玩家打完联机对局后，他们会出现在这里", 130, top + 120, 490, 60, 21)
+				if controller.friends_tab == "search":
+					empty_state("按昵称搜索玩家，或输入对方的 ID", top + 100)
+				else:
+					empty_state("和其他玩家打完联机对局后，\n他们会出现在这里，可以直接加好友", top + 20, "去联机对战", func(): controller.show_page(3))
 		_:
 			var sorted: Array = model.friends.duplicate()
 			sorted.sort_custom(func(a, b): return bool(a.get("online", false)) and not bool(b.get("online", false)))
@@ -712,10 +716,18 @@ func friends_page() -> void:
 				actions.append(["删除", controller.remove_friend.bind(id)])
 				rows.append([entry, presence_text(entry), actions])
 			if rows.is_empty():
-				text_label("还没有好友，去“找人”添加吧", 130, top + 150, 490, 60, 21)
+				empty_state("还没有好友", top + 20, "去找人", func(): controller.friends_tab = "search"; _refresh())
 	friend_rows(rows, top, 1100 - top)
 	nav()
 	state_line("在房间里时，可以邀请在线好友加入" if model.session == "in_room" else "进入联机房间后，可以邀请在线好友加入")
+
+## A framed placeholder for an empty list, with an optional way forward.
+func empty_state(message: String, y: float, action_label := "", action := Callable()) -> void:
+	dark_panel(95, y, 560, 230 if not action_label.is_empty() else 150, Color(0.4, 0.33, 0.22), Color(0.025, 0.04, 0.06, 0.88), 2, 10)
+	art_any(["add-friend-icon"], 343, y + 18, 64)
+	text_label(message, 115, y + 86, 520, 60, 20)
+	if not action_label.is_empty():
+		chip(action_label, 265, y + 158, 220, 56, action, true)
 
 func presence_text(entry: Dictionary) -> String:
 	if not bool(entry.get("online", false)):
@@ -725,6 +737,8 @@ func presence_text(entry: Dictionary) -> String:
 
 ## Scrolling player rows: [entry, status text, [[button text, Callable], ...]].
 func friend_rows(rows: Array, top: float, height: float) -> void:
+	if rows.is_empty():
+		return # An empty scroll box would sit over the empty state's button.
 	var scroll := ScrollContainer.new()
 	scroll.position = Vector2(95, top)
 	scroll.size = Vector2(560, height)
