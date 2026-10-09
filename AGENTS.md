@@ -28,6 +28,7 @@ Godot（在 `客户端/Godot_Client`，引擎 `E:\Game_Work\Godot\Godot_v4.7.2-s
 <godot> --headless --path . --import
 <godot> --path . --script res://tools/smoke_client.gd --audio-driver Dummy
 <godot> --headless --path . --script res://tools/smoke_flow.gd
+<godot> --headless --path . --script res://tools/smoke_effects.gd
 <godot> --headless --path . --script res://tools/smoke_selfplay.gd -- players=7 games=2 seed=1 url=local
 ```
 

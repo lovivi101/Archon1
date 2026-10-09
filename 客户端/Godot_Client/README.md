@@ -47,6 +47,7 @@ Godot 4.7.2 项目。运行 `Run-Game.cmd` 从登录页开始；`Open-Editor.cmd
 & 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --import
 & 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --path . --script res://tools/smoke_client.gd --audio-driver Dummy
 & 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --script res://tools/smoke_flow.gd
+& 'E:\Game_Work\Godot\Godot_v4.7.2-stable_win64_console.exe' --headless --path . --script res://tools/smoke_effects.gd
 ```
 
 Linux 下用 `Godot_v4.7.2-stable_linux.x86_64` 执行相同参数；没有显示器时第二条需要放在 `xvfb-run -a` 下运行。

@@ -9,6 +9,14 @@ var status: Label
 var inputs: Dictionary = {}
 var search_text := ""
 var timer_label: Label
+var timer_icon: TextureRect
+## False until this page instance has been drawn once; entrance effects play on the first build only.
+var _built_once := false
+## The last result / game end whose effect has played (see AvalonController.result_serial), across
+## page instances; effects_played logs them for the effects smoke test.
+static var _played_result := 0
+static var _played_end := 0
+static var effects_played: Array = []
 ## Chat boxes that stay scrolled to the newest message (see _process).
 var pinned_scrolls: Array = []
 var _rebuild_queued := false
@@ -63,13 +71,37 @@ func _ready() -> void:
 	add_child(layer)
 	AvalonApp.controller.changed.connect(_refresh)
 	AvalonApp.controller.notice.connect(_notice)
+	AvalonApp.controller.game_event.connect(_on_game_event)
 	_refresh()
+	AvalonEffects.fade_in(self)
 
 func _exit_tree() -> void:
 	if AvalonApp.controller.changed.is_connected(_refresh):
 		AvalonApp.controller.changed.disconnect(_refresh)
 	if AvalonApp.controller.notice.is_connected(_notice):
 		AvalonApp.controller.notice.disconnect(_notice)
+	if AvalonApp.controller.game_event.is_connected(_on_game_event):
+		AvalonApp.controller.game_event.disconnect(_on_game_event)
+
+## A refused action gets a small jolt on top of its notice.
+func _on_game_event(name: String) -> void:
+	if name == "ui_error":
+		AvalonEffects.shake(self, 6.0)
+		AvalonEffects.vibrate(30)
+
+## Plays a result's effect the first time a page shows that result, never again on rebuilds.
+func _result_effect(node: Control, bad: bool) -> void:
+	var serial: int = AvalonApp.controller.result_serial
+	if serial == _played_result:
+		return
+	_played_result = serial
+	effects_played.append(["result", serial])
+	AvalonEffects.pop_in(node)
+	if bad:
+		AvalonEffects.shake(self)
+		AvalonEffects.vibrate(120)
+	else:
+		AvalonEffects.vibrate(40)
 
 ## Coalesces change notifications into at most one rebuild per frame.
 func _refresh() -> void:
@@ -98,7 +130,9 @@ func _rebuild() -> void:
 	pinned_scrolls = []
 	status = null
 	timer_label = null
+	timer_icon = null
 	build_page()
+	_built_once = true
 	for key in kept:
 		if inputs.has(key) and not str(kept[key][0]).is_empty():
 			var field: LineEdit = inputs[key]
@@ -114,7 +148,7 @@ func _page_signature() -> String:
 	var controller: AvalonController = AvalonApp.controller
 	return JSON.stringify([snapshot, controller.team_choice, controller.last_notice, controller.last_result_route, controller.lobby_count, controller.board_tab,
 		controller.excalibur_choice, controller.avatar_choice, controller.friends_tab, AvalonApp.model.social_snapshot(), AvalonApp.profile.data.get("muted", false),
-		AvalonApp.profile.data.get("music_on", true), AvalonApp.profile.data.get("sfx_on", true),
+		AvalonApp.profile.data.get("music_on", true), AvalonApp.profile.data.get("sfx_on", true), AvalonApp.profile.data.get("vibration", true),
 		AvalonApp.profile.data.friends.size(), AvalonApp.profile.data.matches.size()])
 
 func _process(_delta: float) -> void:
@@ -128,6 +162,9 @@ func _process(_delta: float) -> void:
 	if is_instance_valid(timer_label):
 		var left: int = AvalonApp.model.seconds_left()
 		timer_label.text = "%d 秒" % left if left >= 0 else ""
+		# The icon beats through the last ten seconds.
+		if left >= 0 and left <= 10 and is_instance_valid(timer_icon):
+			AvalonEffects.pulse(timer_icon)
 
 func _notice(message: String) -> void:
 	if is_instance_valid(status):
@@ -283,6 +320,7 @@ func button(value: String, x: float, y: float, width: float, action: Callable, k
 	control.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 	control.pressed.connect(action)
 	layer.add_child(control)
+	AvalonEffects.press_feedback(control, [bg, control])
 	return control
 
 ## Small framed button for choices (player count, seat pickers); `selected` draws it highlighted.
@@ -523,7 +561,7 @@ func progress(show_status := true) -> void:
 		# Left of the header's bottom ornament, which hangs down to about y 190 in the middle.
 		text_label("第 %d 轮 · %s · 队长 %d 号" % [model.round, T.stage_name(model.stage), model.captain_seat + 1], 70, 170, 290, 34, 20, HORIZONTAL_ALIGNMENT_LEFT)
 		if model.seconds_left() >= 0:
-			art("timer-icon", 590, 170, 30)
+			timer_icon = art("timer-icon", 590, 170, 30)
 			timer_label = text_label("", 622, 166, 90, 40, 22, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			_process(0.0)
 	var track_height := TRACK_WIDTH * 369.0 / 2145.0
@@ -991,8 +1029,11 @@ func build_page() -> void:
 			button("查看身份", 185, 1055, 380, func(): controller.show_page(6))
 		6:
 			header("你的身份")
-			art("card_role_front", 130, 220, 490)
-			art(str(ROLE_ART.get(model.my_role, "avatar-empty-slot")), 275, 320, 200)
+			var card := art("card_role_front", 130, 220, 490)
+			var emblem := art(str(ROLE_ART.get(model.my_role, "avatar-empty-slot")), 275, 320, 200)
+			if not _built_once:
+				AvalonEffects.pop_in(card, 0.3)
+				AvalonEffects.pop_in(emblem, 0.4)
 			text_label(T.role_name(model.my_role) + ("（坏人阵营）" if T.is_bad_role(model.my_role) else "（好人阵营）"), 140, 635, 470, 65, 34)
 			text_label(identity_hint(), 165, 708, 420, 112, 20)
 			text_label("请记住你的身份，不要向其他玩家展示", 110, 830, 530, 50, 20)
@@ -1140,9 +1181,9 @@ func build_page() -> void:
 			progress(false)
 			var mission_ok := model.last_vote_passed if is_vote else bool(model.last_mission.get("isSuccess", false))
 			if is_vote:
-				art_any(["vote-approve-emblem" if mission_ok else "vote-reject-emblem", "thumbs-approve-icon" if mission_ok else "thumbs-reject-icon"], 270, 330, 210)
+				_result_effect(art_any(["vote-approve-emblem" if mission_ok else "vote-reject-emblem", "thumbs-approve-icon" if mission_ok else "thumbs-reject-icon"], 270, 330, 210), not mission_ok)
 			else:
-				art("mission-success-emblem" if mission_ok else "mission-failure-emblem", 255, 320, 240)
+				_result_effect(art("mission-success-emblem" if mission_ok else "mission-failure-emblem", 255, 320, 240), not mission_ok)
 			dark_panel(60, 590, 630, 380, Color(0.51, 0.4, 0.24), Color(0.02, 0.03, 0.05, 0.85))
 			text_label(("队伍通过" if mission_ok else "队伍被否决") if is_vote else ("任务成功" if mission_ok else "任务失败"), 70, 600, 610, 80, 42, HORIZONTAL_ALIGNMENT_CENTER, (Color(0.6, 0.9, 0.6) if mission_ok else RED))
 			text_label("连续否决 %d / 5" % model.failed_votes if is_vote else "失败牌 %d 张 · 累计成功 %d 次、失败 %d 次" % [int(model.last_mission.get("failCount", 0)), model.mission_results.count(true), model.mission_results.count(false)], 70, 680, 610, 44, 23)
@@ -1211,7 +1252,15 @@ func build_page() -> void:
 			if won != null:
 				headline += "  ·  你%s" % ("赢了" if won else "输了")
 			var good_won: bool = fr.get("winner") == true
-			text_label(headline, 60, 180, 630, 80, 40, HORIZONTAL_ALIGNMENT_CENTER, BLUE if good_won else RED)
+			var title := text_label(headline, 60, 180, 630, 80, 40, HORIZONTAL_ALIGNMENT_CENTER, BLUE if good_won else RED)
+			# Once per game end: the title pops, and a loss shakes the page.
+			if controller.end_serial != _played_end:
+				_played_end = controller.end_serial
+				effects_played.append(["end", _played_end])
+				AvalonEffects.pop_in(title, 0.35)
+				if won == false:
+					AvalonEffects.shake(self)
+					AvalonEffects.vibrate(120)
 			text_label(str(fr.get("reason", "")).replace("AI_", ""), 80, 260, 590, 60, 21)
 			if not model.last_rating.is_empty() and model.mode == "network":
 				var delta := int(model.last_rating.get("delta", 0))
@@ -1362,8 +1411,15 @@ func build_page() -> void:
 			chip("总音量 " + ("关" if muted else "开"), 200, 785, 150, 58, func(): controller.set_muted(not muted), not muted)
 			chip("音乐 " + ("开" if music_on else "关"), 365, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.MUSIC_BUS, not music_on), music_on)
 			chip("音效 " + ("开" if sfx_on else "关"), 520, 785, 140, 58, func(): controller.set_audio_bus(AvalonAudio.SFX_BUS, not sfx_on), sfx_on)
-			text_label("服务器", 90, 862, 100, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
-			line_edit("url", model.server_url, "ws://服务器地址:8888", 200, 858, 460, 56)
-			button("保存", 195, 945, 360, func(): if controller.set_server_url(field_text("url")) and controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
+			var vibration: bool = AvalonApp.profile.data.get("vibration", true)
+			text_label("震动", 90, 862, 120, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
+			chip("震动 " + ("开" if vibration else "关"), 200, 857, 150, 58, func():
+				AvalonApp.profile.data.vibration = not vibration
+				AvalonApp.profile.save()
+				_refresh(), vibration)
+			text_label("仅手机有效", 365, 862, 200, 50, 17, HORIZONTAL_ALIGNMENT_LEFT, Color(0.7, 0.66, 0.58))
+			text_label("服务器", 90, 934, 100, 50, 20, HORIZONTAL_ALIGNMENT_LEFT)
+			line_edit("url", model.server_url, "ws://服务器地址:8888", 200, 930, 460, 56)
+			button("保存", 195, 1005, 360, func(): if controller.set_server_url(field_text("url")) and controller.save_profile(field_text("nickname"), controller.avatar_choice): controller.show_page(2))
 			button("返回", 220, 1110, 310, func(): controller.show_page(2), "button_secondary_dark")
 			state_line("修改会在下次进入房间时生效")

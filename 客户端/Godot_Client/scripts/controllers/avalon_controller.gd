@@ -23,6 +23,9 @@ var auto_elapsed := 0.0
 var reveal_seen := false
 var team_choice: Array = []
 var last_result_route := 0
+## Count vote / mission results and game ends, so pages play their effect once per event, not per rebuild.
+var result_serial := 0
+var end_serial := 0
 var reconnect_elapsed := 0.0
 var reconnect_attempts := 0
 var manual_close := false
@@ -618,11 +621,14 @@ func _on_packet(route: int, payload: Dictionary) -> void:
 			notice.emit("王者之剑：%d号原本出的是%s" % [int(payload.get("targetSeat", -1)) + 1, "成功" if payload.get("originalSuccess", true) else "失败"])
 		T.Route.VOTE_RESULT:
 			last_result_route = route
+			result_serial += 1
 			show_page(11)
 		T.Route.MISSION_RESULT:
 			last_result_route = route
+			result_serial += 1
 			show_page(11)
 		T.Route.GAME_END:
+			end_serial += 1
 			auto_demo = false
 			profile.record(model.snapshot())
 			if page != 11:

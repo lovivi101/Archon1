@@ -14,6 +14,8 @@ func shot(page: int, tag: String) -> void:
 	taken[key] = true
 	var scene: Control = load("res://scenes/page_%02d.tscn" % page).instantiate()
 	viewport.add_child(scene)
+	# Past the page fade-in and pop-in effects.
+	await create_timer(0.4).timeout
 	for i in 4:
 		await process_frame
 	viewport.get_texture().get_image().save_png("%s/%s.png" % [out, key])
