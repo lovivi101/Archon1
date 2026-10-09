@@ -51,7 +51,31 @@ func run() -> void:
 	if AvalonEffects.vibrations != before + 1:
 		return fail("did not vibrate while switched on")
 
-	# 3. Play local games until a result page shows, redraw it a few times and shake it mid-rebuild.
+	# 3. The turn banner sits on its host above the pages and removes itself; a second one replaces the first.
+	AvalonEffects.banner(app, "轮到你投票了")
+	AvalonEffects.banner(app, "轮到你发言了")
+	await frames(2)
+	if app.get_children().filter(func(child): return str(child.name).begins_with("TurnBanner")).size() != 1:
+		return fail("expected exactly one turn banner")
+	await wait(1.9)
+	if app.get_node_or_null("TurnBanner") != null:
+		return fail("turn banner did not go away")
+
+	# 4. A card flip ends with the face showing at full width and the back hidden.
+	var back := Control.new()
+	var face := Control.new()
+	back.size = Vector2(50, 70)
+	face.size = Vector2(60, 60)
+	root.add_child(back)
+	root.add_child(face)
+	AvalonEffects.flip_reveal(back, face, 0.05)
+	await wait(0.6)
+	if back.visible or not face.visible or not is_equal_approx(face.scale.x, 1.0):
+		return fail("flip ended with back=%s face=%s scale=%s" % [back.visible, face.visible, face.scale])
+	back.queue_free()
+	face.queue_free()
+
+	# 5. Play local games until a result page shows, redraw it a few times and shake it mid-rebuild.
 	controller.create_local_room(5, 7)
 	controller.ready()
 	controller.confirm_identity()

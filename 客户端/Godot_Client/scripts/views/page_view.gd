@@ -325,7 +325,7 @@ func button(value: String, x: float, y: float, width: float, action: Callable, k
 
 ## Small framed button for choices (player count, seat pickers); `selected` draws it highlighted.
 func chip(value: String, x: float, y: float, width: float, height: float, action: Callable, selected := false) -> Button:
-	dark_panel(x, y, width, height, GOLD if selected else Color(0.51, 0.4, 0.24), Color(0.16, 0.12, 0.05, 0.95) if selected else Color(0.025, 0.04, 0.06, 0.92))
+	var bg := dark_panel(x, y, width, height, GOLD if selected else Color(0.51, 0.4, 0.24), Color(0.16, 0.12, 0.05, 0.95) if selected else Color(0.025, 0.04, 0.06, 0.92))
 	var control := Button.new()
 	control.flat = true
 	control.text = value
@@ -336,6 +336,7 @@ func chip(value: String, x: float, y: float, width: float, height: float, action
 	control.pressed.connect(func(): AvalonApp.audio.play_sfx("ui_click"))
 	control.pressed.connect(action)
 	layer.add_child(control)
+	AvalonEffects.press_feedback(control, [bg, control])
 	return control
 
 func line_edit(key: String, value: String, placeholder: String, x: float, y: float, width: float, height: float) -> LineEdit:
@@ -523,7 +524,9 @@ func seats(interactive := false) -> void:
 		var picked: bool = (i in model.selected_seats and model.stage != T.Stage.ASSASSINATING) or i in controller.team_choice
 		var ring := BLUE if speaking else (GOLD if picked else (RED if i in model.revealed_evil else Color(0, 0, 0, 0)))
 		if ring.a > 0.0:
-			dark_panel(x - 5, y - 5, size + 10, size + 10, ring, Color(ring.r, ring.g, ring.b, 0.18), 4, 14)
+			var ring_panel := dark_panel(x - 5, y - 5, size + 10, size + 10, ring, Color(ring.r, ring.g, ring.b, 0.18), 4, 14)
+			if speaking:
+				AvalonEffects.pulse(ring_panel, 1.07, 1.2)
 		player_avatar(i, x, y, size)
 		var ready_in_lobby: bool = model.stage == T.Stage.PREPARING and i < model.players.size() and bool(model.players[i].get("isReady", false))
 		if ready_in_lobby or picked:
@@ -1180,6 +1183,8 @@ func build_page() -> void:
 			# The track, not the status line: the model has already moved on to the next stage.
 			progress(false)
 			var mission_ok := model.last_vote_passed if is_vote else bool(model.last_mission.get("isSuccess", false))
+			# Read before _result_effect marks this result as played.
+			var fresh := controller.result_serial != _played_result
 			if is_vote:
 				_result_effect(art_any(["vote-approve-emblem" if mission_ok else "vote-reject-emblem", "thumbs-approve-icon" if mission_ok else "thumbs-reject-icon"], 270, 330, 210), not mission_ok)
 			else:
@@ -1211,10 +1216,21 @@ func build_page() -> void:
 						var y := 778.0 + (i / 5) * 76.0
 						art(avatar_name(seat), x + 5, y, 48)
 						text_label("%d号" % (seat + 1), x, y + 48, 58, 24, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if seat == model.my_seat() else color)
-			elif not model.last_excalibur.is_empty():
-				var target := int(model.last_excalibur.get("targetSeat", -1))
-				var holder := int(model.last_excalibur.get("holderSeat", -1))
-				text_label("王者之剑：%d号%s" % [holder + 1, "翻转了%d号的牌" % (target + 1) if target >= 0 else "没有使用"], 90, 760, 570, 50, 21, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
+			else:
+				# The cards as played, successes first; the first time they turn over one by one.
+				var round_no := int(model.last_mission.get("round", model.round))
+				var card_count := T.team_size(model.players.size(), round_no)
+				var fails := int(model.last_mission.get("failCount", 0))
+				var first_x := 375.0 - (card_count * 84.0 - 20.0) / 2.0
+				for i in card_count:
+					var x := first_x + i * 84.0
+					var face := art("mission-failure-emblem" if i >= card_count - fails else "mission-success-emblem", x, 752, 64)
+					if fresh:
+						AvalonEffects.flip_reveal(art("card_role_back", x + 6, 736, 52), face, 0.35 + i * 0.3)
+				if not model.last_excalibur.is_empty():
+					var target := int(model.last_excalibur.get("targetSeat", -1))
+					var holder := int(model.last_excalibur.get("holderSeat", -1))
+					text_label("王者之剑：%d号%s" % [holder + 1, "翻转了%d号的牌" % (target + 1) if target >= 0 else "没有使用"], 90, 860, 570, 50, 21, HORIZONTAL_ALIGNMENT_CENTER, GOLD)
 			turn_alert(985)
 			button("查看结算" if model.stage == T.Stage.END else "继续", 175, 1050, 400, func(): controller.show_page(controller.page_for_stage(model.stage)))
 		12:

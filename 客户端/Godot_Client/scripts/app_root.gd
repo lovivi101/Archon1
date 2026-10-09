@@ -29,11 +29,21 @@ func _ready() -> void:
 	controller.share = share
 	controller.invite_code = share.launch_room_code()
 	controller.game_event.connect(audio.play_sfx)
+	controller.game_event.connect(_on_game_event)
 	controller.page_changed.connect(func(page: int): audio.play_music(audio.music_for_page(page, model)))
 	audio.play_music("bgm_lobby")
 
 func _process(_delta: float) -> void:
 	audio.update_countdown(model)
+
+## Announces the player's turn above whatever page is showing.
+func _on_game_event(name: String) -> void:
+	if name == "your_turn":
+		var action := model.pending_action()
+		# Result pages hold the player on purpose and carry their own turn line (turn_alert).
+		if not action.is_empty() and controller.page not in [11, 13]:
+			AvalonEffects.banner(self, "轮到你%s了" % action)
+			AvalonEffects.vibrate(60)
 
 func login_requested(provider: String) -> void:
 	controller.login(provider)
