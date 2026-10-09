@@ -541,7 +541,9 @@ func progress(show_status := true) -> void:
 			dark_panel(cx - 27, middle - 27, 54, 54, GOLD, Color(0.3, 0.22, 0.05, 0.35), 3, 27)
 		text_label("%d人" % T.team_size(count, i + 1), cx - 30, middle - 18, 60, 36, 18, HORIZONTAL_ALIGNMENT_CENTER, GOLD if current else Color(0.85, 0.8, 0.7))
 		if T.needs_two_fails(count, i + 1):
-			text_label("需2败", cx - 32, TRACK_Y + track_height - 4, 64, 22, 14, HORIZONTAL_ALIGNMENT_CENTER, Color(0.95, 0.6, 0.5))
+			# A red tag hanging under the circle, so the rule is not missed.
+			dark_panel(cx - 34, TRACK_Y + track_height - 12, 68, 26, RED, Color(0.35, 0.06, 0.05, 0.95), 2, 13)
+			text_label("需2败", cx - 34, TRACK_Y + track_height - 13, 68, 28, 17, HORIZONTAL_ALIGNMENT_CENTER, Color(1, 0.86, 0.8))
 
 ## Seat list like "2号 小明、5号 阿强" for identity and vote summaries.
 func seat_names(list: Array) -> String:
@@ -655,9 +657,11 @@ func friends_page() -> void:
 	var top := 175.0
 	if not model.room_invite.is_empty():
 		var invite: Dictionary = model.room_invite
-		strip(top, 64)
-		text_label("%s 邀请你加入 %d 人局（房间 %s）" % [str(invite.get("nickname", "好友")).left(8), int(invite.get("playerCount", 5)), invite.get("roomId", "")], 55, top + 4, 400, 56, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
-		chip("加入", 465, top + 6, 110, 52, controller.accept_room_invite)
+		# A gold-framed banner: it needs an answer, unlike the rest of the page.
+		dark_panel(40, top, 670, 64, GOLD, Color(0.16, 0.12, 0.05, 0.96), 2, 10)
+		art("invite-swords-icon", 50, top + 10, 44)
+		text_label("%s 邀请你加入 %d 人局（房间 %s）" % [str(invite.get("nickname", "好友")).left(8), int(invite.get("playerCount", 5)), invite.get("roomId", "")], 102, top + 4, 355, 56, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
+		chip("加入", 465, top + 6, 110, 52, controller.accept_room_invite, true)
 		chip("忽略", 585, top + 6, 110, 52, controller.dismiss_room_invite)
 		top += 74
 	var request_label := "申请 %d" % model.friend_incoming.size() if not model.friend_incoming.is_empty() else "申请"
@@ -893,13 +897,15 @@ func build_page() -> void:
 			layer.add_child(profile_button)
 			art("game_logo_title", 145, 268, 460)
 			button("联机对战", 145, 820, 460, func(): controller.show_page(3))
-			text_label("本地练习人数", 90, 925, 570, 36, 19, HORIZONTAL_ALIGNMENT_LEFT)
+			# The size chips belong to local practice, so they share its panel.
+			dark_panel(70, 904, 610, 200)
+			text_label("本地练习 · 与 AI 对战", 90, 912, 570, 36, 19, HORIZONTAL_ALIGNMENT_LEFT, GOLD)
 			for i in 6:
 				var count := 5 + i
-				chip("%d人" % count, 90 + i * 96, 965, 86, 50, func(): controller.lobby_count = count; _refresh(), controller.lobby_count == count)
-			button("本地练习（%d人）" % controller.lobby_count, 190, 1030, 370, func(): controller.create_local_room(controller.lobby_count), "button_secondary_dark")
+				chip("%d人" % count, 90 + i * 96, 952, 86, 50, func(): controller.lobby_count = count; _refresh(), controller.lobby_count == count)
+			button("开始练习（%d人）" % controller.lobby_count, 190, 1014, 370, func(): controller.create_local_room(controller.lobby_count), "button_secondary_dark")
 			nav()
-			state_line("本地练习可离线与 AI 对战，规则与联机相同")
+			state_line("本地练习无需联网，规则与联机相同")
 		3:
 			header("联机大厅", "选择人数后匹配或创建房间")
 			# Two groups: open a game (size, then match or create) and join a friend's room by code.
@@ -939,7 +945,10 @@ func build_page() -> void:
 			var roles: Array = model.role_set if not model.role_set.is_empty() else T.roles_for(model.target_players)
 			var evil_count := roles.filter(func(role): return T.is_bad_role(int(role))).size()
 			text_label("好人 %d · 坏人 %d" % [roles.size() - evil_count, evil_count], 110, 858, 330, 50, 22, HORIZONTAL_ALIGNMENT_LEFT)
-			chip("规则详情", 470, 858, 170, 50, func(): show_info("本局规则", room_rules_text()))
+			var rules_chip := chip("规则详情", 470, 858, 170, 50, func(): show_info("本局规则", room_rules_text()))
+			if ResourceLoader.exists("res://assets/ui/rules-scroll-icon.png"):
+				rules_chip.text = "    规则详情"
+				art("rules-scroll-icon", 480, 863, 40)
 			if model.mode != "local_demo":
 				text_label("空位在开局时由 AI 补齐", 110, 912, 530, 36, 17, HORIZONTAL_ALIGNMENT_LEFT, Color(0.78, 0.74, 0.64))
 			var me := model.my_seat()
@@ -973,6 +982,10 @@ func build_page() -> void:
 			text_label(T.role_name(model.my_role) + ("（坏人阵营）" if T.is_bad_role(model.my_role) else "（好人阵营）"), 140, 635, 470, 65, 34)
 			text_label(identity_hint(), 165, 708, 420, 112, 20)
 			text_label("请记住你的身份，不要向其他玩家展示", 110, 830, 530, 50, 20)
+			# What the night showed, as faces in the card's empty lower half.
+			var seen: Array = model.visible_seats.slice(0, 4)
+			for i in seen.size():
+				player_avatar(int(seen[i]), 375 - seen.size() * 60 + i * 120 + 28, 878, 64)
 			turn_alert(975)
 			button("确认身份", 160, 1035, 430, func(): controller.confirm_identity())
 		7:
@@ -1011,7 +1024,9 @@ func build_page() -> void:
 			progress()
 			seats(true)
 			strip(782, 50)
-			text_label("需要选择 %d 名队员，已选择 %d 名" % [model.get_team_size(), controller.team_choice.size()], 65, 782, 620, 50, 24)
+			var picked_count := controller.team_choice.size()
+			text_label("需要选择 %d 名队员" % model.get_team_size(), 80, 782, 330, 50, 24, HORIZONTAL_ALIGNMENT_LEFT)
+			text_label("已选 %d / %d" % [picked_count, model.get_team_size()], 400, 778, 270, 58, 30, HORIZONTAL_ALIGNMENT_RIGHT, GOLD if picked_count == model.get_team_size() else Color(0.95, 0.9, 0.78))
 			var excalibur: bool = bool(model.rules.get("excalibur", false))
 			if model.is_captain() and excalibur and controller.team_choice.size() == model.get_team_size():
 				text_label("把王者之剑交给：", 65, 845, 620, 40, 21, HORIZONTAL_ALIGNMENT_LEFT)
@@ -1089,9 +1104,16 @@ func build_page() -> void:
 				strip(500, 80)
 				text_label("你是任务队员，请出牌" if model.is_member() and not model.acted else ("等待任务队员行动" if not model.is_member() else "已出牌"), 60, 500, 630, 80, 32)
 				var playing := model.is_member() and not model.acted
-				for emblem in [art("mission-success-emblem", 150, 640, 150), art("mission-failure-emblem", 450, 640, 150)]:
-					if not playing:
-						emblem.modulate = Color(1, 1, 1, 0.35)
+				if playing or not ResourceLoader.exists("res://assets/ui/mission-waiting-emblem.png"):
+					for emblem in [art("mission-success-emblem", 150, 640, 150), art("mission-failure-emblem", 450, 640, 150)]:
+						if not playing:
+							emblem.modulate = Color(1, 1, 1, 0.35)
+				else:
+					art("mission-waiting-emblem", 285, 610, 180)
+				# The team's faces fill the lower half; nobody's card is shown.
+				var team: Array = model.selected_seats
+				for i in team.size():
+					player_avatar(int(team[i]), 375 - team.size() * 60 + i * 120 + 18, 985, 84)
 				if model.is_member() and not model.acted:
 					button("任务成功", 80, 875, 285, func(): controller.mission(true))
 					if T.is_bad_role(model.my_role):
@@ -1192,6 +1214,10 @@ func build_page() -> void:
 				var tag := "（你）" if mine_row else (" · AI" if player.get("isAi", false) else "")
 				var role := int(player.get("role", 0))
 				var row_y := 440 + i * row
+				# The winning side's rows are lit.
+				if T.is_bad_role(role) != good_won:
+					var side_color := RED if T.is_bad_role(role) else BLUE
+					dark_panel(158, row_y + 2, 434, row - 8, Color(side_color.r, side_color.g, side_color.b, 0.55), Color(side_color.r, side_color.g, side_color.b, 0.14), 1, 8)
 				if ROLE_ART.has(role):
 					art(ROLE_ART[role], 166, row_y + (row - 4) / 2.0 - 25, 50)
 				text_label("%d. %s  %s%s" % [i + 1, display_name(str(player.get("nickname", "玩家"))).left(7), T.role_name(role), tag], 220, row_y, 380, row - 4, 21, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else BLUE)

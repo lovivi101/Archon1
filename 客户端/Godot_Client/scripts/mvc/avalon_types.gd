@@ -86,6 +86,9 @@ static func rules_text(player_count: int) -> String:
 static func tier_icon(tier: String) -> String:
 	var files := {"青铜": "tier-1-bronze", "白银": "tier-2-silver", "黄金": "tier-3-gold", "铂金": "tier-4-platinum", "钻石": "tier-5-diamond", "王者": "tier-6-king"}
 	var name: String = files.get(tier.left(2), "")
+	# Bronze and silver were redrawn ("-v2") so they can be told apart at 32 px.
+	if not name.is_empty() and ResourceLoader.exists("res://assets/ui/%s-v2.png" % name):
+		return name + "-v2"
 	return name if not name.is_empty() and ResourceLoader.exists("res://assets/ui/%s.png" % name) else ""
 
 static func rules_for(player_count: int) -> Dictionary:
