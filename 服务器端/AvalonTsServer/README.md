@@ -152,6 +152,10 @@ Compose 以 `NODE_ENV=production` 运行，因此 `.env` 必须设置 `AVALON_TO
 | `AVALON_LLM_MODEL` | 覆盖模型；其他 provider 必须同时配置地址和模型 |
 | `AVALON_LLM_API_KEY` | 优先使用非空值；不在日志中输出 |
 | `AVALON_LLM_KEY_FILE` | API_KEY 为空时读取；支持文件只含 key 或一行 `key = xxx`；文件请保存在仓库之外 |
+| `AVALON_JEV_API_KEY` | Jev 凭据，优先使用非空值；只在需要 Jev 座位时加载，不写日志 |
+| `AVALON_JEV_KEY_FILE` | Jev API_KEY 为空时读取；同样支持纯 key 或 `key = xxx`；请放在仓库之外 |
+| `AVALON_JEV_MODEL` | `jev-latest` |
+| `AVALON_JEV_BASE_URL` | `https://api.typesafe.ai`，调用时追加 `/v1/systemone` |
 
 Git Bash 示例（自行将凭据放入本地文件，不要将 key 写进命令或提交到仓库）：
 
@@ -160,17 +164,28 @@ export AVALON_LLM_KEY_FILE='C:/Users/Administrator/.config/avalon/llm-key.txt'
 npm run arena -- --games 1 --players 5 --llm-seats all --seed 1 --out logs/arena --speech 1
 # 混合对局，关闭 LLM 发言以减少调用：
 npm run arena -- --games 2 --players 7 --llm-seats 0,2,4 --seed 1 --speech 0
+# Chat Completions、Jev 与内置 AI 混合；新参数的座位号从 1 开始：
+export AVALON_JEV_KEY_FILE='C:/Users/Administrator/.config/avalon/jev-key.txt'
+npm run arena -- --games 1 --players 5 --seat-providers 1:deepseek,2:jev,3:heuristic,4:jev,5:deepseek --seed 1
 ```
 
 `--llm-seats` 使用从 0 开始的内部座位索引。`join()` 顺序分配座位，因此指定的 LLM 座位按列表顺序重编号为 `0..k-1`：例如 `0,2,4` 实际是 `0,1,2`（界面显示为 1、2、3 号），其他座位都是 AI。每局 JSONL 首行及最终汇总的 `seatMapping` 都记录请求索引与实际索引。对模型的提示、视野、历史、候选、事实和 JSON 的 `team` / `target` 全部使用从 1 开始的显示号码，与游戏界面一致。Agent 校验号码在 `1..人数` 范围内后减 1，`Decision.value` 中的座位仍为内部 `seatIndex`，回退 AI 的座位结果不换算。真人、内置 AI 和 LLM 的发言均使用显示号码；提示只补全昵称，不改数字，回退发言使用内置 AI 原文（去换行、最多 80 字）。
+
+`--seat-providers` 支持 `deepseek`、`jev`、`heuristic`，**输入为从 1 开始的请求座位号**。它先覆盖对应请求座位的后端，未指定的座位仍按 `--llm-seats` 旧逻辑分配（默认 `all`，使用 `AVALON_LLM_PROVIDER`）。随后沿用旧版加入方式：外部模型座位先加入，启发式座位由房间补齐；外部座位按旧列表顺序加入，新增外部座位接在后面，启发式按请求座位升序映射。上述示例的实际显示座位为：1 号 deepseek、2/3 号 Jev、4 号 deepseek、5 号 heuristic。首行和汇总新增 `providerSeatMapping: [{requested, actual, provider}]`，这两个号码都从 **1** 开始，另有 `providerSeatBase: 1`；原 `seatMapping` 仍是从 0 开始的模型座位映射。动作新增 `seatNumber`（实际显示号）和 `seatProvider`（该座位配置的后端）。全 heuristic 不需要任何 key；全 Jev 不需要 Chat Completions key。
 
 JSONL 首行的 `seatNumbering` 明确约定：`seatIndexBase: 0`、`speechSeatBase: 1`、`modelSeatBase: 1`。`seatMapping.requested/actual`、`actualLlmSeats`、`heuristicSeats`、动作的 `seat`，以及 `propose`、`assassinate`、`excaliburHolder`、`excaliburTarget`、`ladyTarget` 的 `value` 均为从 0 开始的内部索引（王者之剑 `-1` 仍表示不使用）。发言、理由和结果描述里的号码为从 1 开始的显示号码，日志不转换发言数字。
 
 默认每次请求超时 20 秒；429、5xx、网络 TypeError 最多重试 2 次，退避 100/200 毫秒。超时、调用失败或非法 JSON 决策回退到内置 AI；好人失败牌、重复/越界队伍和刺杀同伴均会拒绝。王者之剑和湖中仙女始终用启发式策略，记录 `provider: "heuristic"`。`--speech 0` 只跳过 LLM 发言，AI 仍照常发言。
 
+Jev 使用共享提示的信息部分作为 `state`，只含当前座位合法可知的信息，不带 JSON 输出格式指令。问题统一为 `choice`：投票 `approve/reject`，坏人任务牌 `success/fail`，刺杀 `seat_1` 等合法候选，组队 `team_1_3` 等人数正确的全部组合，键和描述均为显示座位号。好人直接出成功牌，Jev 发言返回 `null` 并直接结束发言，JSONL 记录 `speech: null, reason: "provider has no text output"`（`--speech 0` 下同样保留此记录），两者都不调用服务。组队组合超过 255 时直接用 `aiProposeTeam` 并记录 `fallback: true, fallbackReason: "组合过多"`（当前 5～10 人规则最多 252 种）。缺少有效答案字段、非法 choice 或无效 confidence/probabilities 都回退到对应内置 AI；400/422 不重试。合法答案的 `confidence` 和各选项 `probabilities` 保存在 Decision 与 JSONL 中，不作为额外回退阈值。
+
 每局日志为 `<out>/<时间戳>-g<序号>.jsonl`（时间戳附进程号避免冲突，默认 `logs/arena/`，`logs/` 已忽略）。首行为配置及座位映射，中间为决策，末行为结果。决策含身份（供离线复盘，不进入其他玩家提示）、动作、值、理由/发言、耗时、token 和回退原因。最后控制台输出 JSON 汇总：`goodWins/evilWins`、`assassinationHits/assassinations/assassinationHitRate`、`llmCalls`、`fallbacks`、`tokens`、`averageStepMs`。`llmCalls` 是逻辑决策调用次数，不含 HTTP 重试；token 累计服务实际返回的 usage（缺失 usage 或请求未返回时无法估计消耗）。平均耗时按全部记录动作计算，内置 AI 自动动作记 0 ms，LLM 决策包含重试与回退耗时。
 
+汇总 `byProvider` 按座位配置的 provider 分组，包含 `games`、`goodGames/goodWins/goodWinRate`、`evilGames/evilWins/evilWinRate`、`assassinations/assassinationHits/assassinationHitRate`、`calls`、`fallbacks`、`tokens`。`games` 为该 provider 参与的对局数；阵营分母为该 provider 至少有一个座位属于该阵营的对局数，同一局同一阵营多个座位只计一次，跨阵营可同时计入两个分母。刺杀只计该 provider 担任刺客并实际刺杀的局，分母为零时比率记 0。王者之剑等启发式动作仍归属其配置的座位 provider，但不增加调用数。`llmCalls`/分组 `calls` 排除 Jev 空发言、好人成功牌与组合超限等未发请求的动作；失败请求计一次，HTTP 重试不重复计。Jev `input_tokens/output_tokens` 映射为同一 `tokens.prompt/completion` 结构。
+
 费用估算方法：全 LLM 的 N 人局，P 次提案、M 次实际任务，开启发言时调用数为 `P × (2N + 1) + 各任务队伍人数之和 + A`，A 在进入刺杀时为 1，否则为 0。关闭发言改为 `P × (N + 1) + 队伍人数之和 + A`。例如 5 人局、没有否决、打满 5 轮：开启发言 68～69 次，关闭为 43～44 次；每次否决额外增加 11 或 6 次。混合局按实际 LLM 发言、队长、投票、任务成员、刺客分别计数。假设每次输入 2000、输出 100 tokens，则约 69 次对应 13.8 万输入、6900 输出 tokens；这只是预算假设，历史增长会增加输入量。金额用 `输入 tokens/百万 × 输入单价 + 输出 tokens/百万 × 输出单价` 计算，单价取所用服务账单价格，重试可能增加费用。
+
+上述包含发言的公式用于 Chat Completions。Jev 每局逻辑调用数估算为 `Jev 队长提案次数（组合≤255）+ Jev 座位投票次数 + Jev 坏人实际出任务次数 + Jev 刺客刺杀次数`，不计发言、好人任务牌、王者之剑和湖中仙女。全 Jev 时为 `P × (N + 1) + B + A`，B 为各次任务中坏人上队人数之和。混合局分别估算两类后端；以 `byProvider.jev.calls` 和返回的 token 为实测依据。每次请求都包含当前历史及选项描述，尤其组队选项多时输入会增加；Jev 的金额同样用输入/输出 token 与实际账单单价计算，本地假服务测试不产生供应商费用，也不能代表真实模型效果。
 
 ## 测试
 

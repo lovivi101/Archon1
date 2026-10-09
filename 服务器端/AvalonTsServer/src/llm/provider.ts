@@ -22,7 +22,7 @@ class RequestError extends Error {
 }
 
 /** Never expose transport errors, response bodies or credentials in diagnostics. */
-export class ChatCompletionProvider implements Provider {
+export class JsonProvider {
     readonly #key: string;
     readonly #fetch: typeof fetch;
     readonly #url: string;
@@ -30,12 +30,13 @@ export class ChatCompletionProvider implements Provider {
     readonly #timeoutMs: number;
     readonly #maxRetries: number;
     readonly #usage: Tokens = { prompt: 0, completion: 0 };
+    #calls = 0;
 
-    public constructor(config: ProviderConfig, fetchImpl: typeof fetch = fetch) {
+    public constructor(config: ProviderConfig, fetchImpl: typeof fetch = fetch, endpoint = "/chat/completions") {
         this.#key = config.apiKey.trim();
         if (!this.#key) throw new Error("未配置 LLM key");
         this.#fetch = fetchImpl;
-        this.#url = `${config.baseUrl.replace(/\/+$/, "")}/chat/completions`;
+        this.#url = `${config.baseUrl.replace(/\/+$/, "")}${endpoint}`;
         this.#model = config.model;
         this.#timeoutMs = config.timeoutMs ?? 20000;
         this.#maxRetries = config.maxRetries ?? 2;
@@ -44,12 +45,14 @@ export class ChatCompletionProvider implements Provider {
     }
 
     public get usage(): Tokens { return { ...this.#usage }; }
+    public get calls(): number { return this.#calls; }
 
     public redact(text: string): string {
         return text.replace(/Bearer\s+[^\s"'<>]+/gi, "[已隐藏凭据]").split(this.#key).join("[已隐藏凭据]");
     }
 
-    public async complete(prompt: string): Promise<Completion> {
+    protected async request(body: Record<string, unknown>, inputTokenField: string, outputTokenField: string): Promise<{ data: any; tokens: Tokens }> {
+        this.#calls += 1;
         for (let attempt = 0; ; attempt += 1) {
             const controller = new AbortController();
             let timer: ReturnType<typeof setTimeout> | undefined;
@@ -60,12 +63,12 @@ export class ChatCompletionProvider implements Provider {
                         reject(new RequestError("LLM 请求超时"));
                     }, this.#timeoutMs);
                 });
-                const request = async (): Promise<Completion> => {
+                const request = async (): Promise<{ data: any; tokens: Tokens }> => {
                     const response = await this.#fetch(this.#url, {
                         method: "POST",
                         redirect: "error",
                         headers: { Authorization: `Bearer ${this.#key}`, "Content-Type": "application/json" },
-                        body: JSON.stringify({ model: this.#model, messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } }),
+                        body: JSON.stringify({ ...body, model: this.#model }),
                         signal: controller.signal,
                     });
                     if (!response.ok) {
@@ -75,12 +78,11 @@ export class ChatCompletionProvider implements Provider {
                     let data;
                     try { data = await response.json(); } catch { throw new RequestError("LLM 响应不是 JSON"); }
                     const count = (value: unknown): number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
-                    const tokens = { prompt: count(data?.usage?.prompt_tokens), completion: count(data?.usage?.completion_tokens) };
+                    const tokens = { prompt: count(data?.usage?.[inputTokenField]), completion: count(data?.usage?.[outputTokenField]) };
                     if (controller.signal.aborted) throw new RequestError("LLM 请求超时");
                     this.#usage.prompt += tokens.prompt;
                     this.#usage.completion += tokens.completion;
-                    if (typeof data?.choices?.[0]?.message?.content !== "string") throw new RequestError("LLM 响应缺少文本");
-                    return { content: this.redact(data.choices[0].message.content), tokens };
+                    return { data, tokens };
                 };
                 return await Promise.race([request(), timeout]);
             } catch (error) {
@@ -97,18 +99,31 @@ export class ChatCompletionProvider implements Provider {
     }
 }
 
+export class ChatCompletionProvider extends JsonProvider implements Provider {
+    public async complete(prompt: string): Promise<Completion> {
+        const { data, tokens } = await this.request({ messages: [{ role: "user", content: prompt }], response_format: { type: "json_object" } }, "prompt_tokens", "completion_tokens");
+        if (typeof data?.choices?.[0]?.message?.content !== "string") throw new RequestError("LLM 响应缺少文本");
+        return { content: this.redact(data.choices[0].message.content), tokens };
+    }
+}
+
+export function keyFromEnv(env: NodeJS.ProcessEnv, prefix: string): string {
+    let apiKey = env[`${prefix}_API_KEY`]?.trim() ?? "";
+    if (!apiKey && env[`${prefix}_KEY_FILE`]) {
+        let file;
+        try { file = readFileSync(env[`${prefix}_KEY_FILE`]!, "utf8").trim(); }
+        catch { throw new Error("无法读取 LLM key 文件"); }
+        apiKey = file.replace(/^key\s*=\s*/i, "").trim();
+    }
+    return apiKey;
+}
+
 export function providerFromEnv(env: NodeJS.ProcessEnv = process.env, fetchImpl: typeof fetch = fetch): ChatCompletionProvider {
     const name = env.AVALON_LLM_PROVIDER ?? "deepseek";
     const preset = name === "deepseek" ? presets.deepseek : undefined;
     const baseUrl = env.AVALON_LLM_BASE_URL || preset?.baseUrl;
     const model = env.AVALON_LLM_MODEL || preset?.model;
     if (!baseUrl || !model) throw new Error("未知 LLM provider，请配置 BASE_URL 和 MODEL");
-    let apiKey = env.AVALON_LLM_API_KEY?.trim() ?? "";
-    if (!apiKey && env.AVALON_LLM_KEY_FILE) {
-        let file;
-        try { file = readFileSync(env.AVALON_LLM_KEY_FILE, "utf8").trim(); }
-        catch { throw new Error("无法读取 LLM key 文件"); }
-        apiKey = file.replace(/^key\s*=\s*/i, "").trim();
-    }
+    const apiKey = keyFromEnv(env, "AVALON_LLM");
     return new ChatCompletionProvider({ baseUrl, model, apiKey }, fetchImpl);
 }

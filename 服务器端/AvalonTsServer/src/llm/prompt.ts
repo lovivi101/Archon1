@@ -36,7 +36,7 @@ export function normalizeSpeech(room: AvalonRoom, text: string): string {
     });
 }
 
-export function buildPrompt(room: AvalonRoom, seat: number, action: Action): string {
+export function buildState(room: AvalonRoom, seat: number, action: Action, jsonSeats = false): string {
     const view = room.viewOf(seat);
     const label = (value: number): string => seatLabel(room, value);
     const list = (values: number[]): string => values.map(label).join("、") || "无";
@@ -50,7 +50,8 @@ export function buildPrompt(room: AvalonRoom, seat: number, action: Action): str
     else night = `这些座位是你的坏人同伴：${visible}（奥伯伦除外，你们互不相识）。`;
     const good = room.missionResults.filter(Boolean).length;
     const lines = [
-        "你在玩阿瓦隆。座位号从 1 开始，与游戏界面一致；JSON 里的座位数字也从 1 开始。",
+        jsonSeats ? "你在玩阿瓦隆。座位号从 1 开始，与游戏界面一致；JSON 里的座位数字也从 1 开始。"
+            : "你在玩阿瓦隆。座位号从 1 开始，与游戏界面一致。",
         `你的座位：${label(seat)}；你的身份：${roleNames[view.role]}。`,
         `本局 ${view.playerCount} 人；玩家：${list(Array.from({ length: view.playerCount }, (_, index) => index))}。`,
         `五轮队伍人数依次为：${[1, 2, 3, 4, 5].map((round) => teamSizeFor(view.playerCount, round)).join("、")}。`,
@@ -74,13 +75,16 @@ export function buildPrompt(room: AvalonRoom, seat: number, action: Action): str
     for (const entry of chats) lines.push(`第 ${entry.round} 轮 ${label(entry.seat)}：${JSON.stringify(normalizeSpeech(room, entry.text))}`);
     if (!chats.length) lines.push("无。");
     lines.push(`身份策略：${strategies[view.role]}`);
+    return lines.join("\n");
+}
+
+export function buildPrompt(room: AvalonRoom, seat: number, action: Action): string {
     const formats: Record<Action, string> = {
         speak: '{"speech":"..."}，发言不超过 80 字，不要换行',
-        propose: `{"team":[1,3],"reason":"..."}，team 必须恰有 ${teamSizeFor(view.playerCount, view.round)} 个合法且不重复的座位数字（示例仅表示格式）`,
+        propose: `{"team":[1,3],"reason":"..."}，team 必须恰有 ${room.teamSize()} 个合法且不重复的座位数字（示例仅表示格式）`,
         vote: '{"approve":true,"reason":"..."}，approve 必须是布尔值',
         mission: '{"success":false,"reason":"..."}，success 必须是布尔值，好人必须为 true',
         assassinate: '{"target":4,"reason":"..."}，target 必须来自刺杀候选',
     };
-    lines.push(`当前动作：${action}。只返回 JSON，不要代码块或额外文本：${formats[action]}。`);
-    return lines.join("\n");
+    return `${buildState(room, seat, action, true)}\n当前动作：${action}。只返回 JSON，不要代码块或额外文本：${formats[action]}。`;
 }

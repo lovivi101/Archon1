@@ -1,9 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { AvalonRoom } = require("../dist/avalon.room.js");
-const { Stage } = require("../dist/avalon.types.js");
+const { Stage, Role, isBadRole } = require("../dist/avalon.types.js");
 const { LlmAgent } = require("../dist/llm/agent.js");
 const { providerFromEnv } = require("../dist/llm/provider.js");
+const { jevProviderFromEnv } = require("../dist/llm/jev.js");
 const { roleNames } = require("../dist/llm/prompt.js");
 
 function seeded(seed) {
@@ -18,7 +19,7 @@ function seeded(seed) {
 }
 
 function parseArgs(args) {
-    const values = { games: "1", players: "5", "llm-seats": "all", seed: "1", out: "logs/arena", speech: "1" };
+    const values = { games: "1", players: "5", "llm-seats": "all", "seat-providers": "", seed: "1", out: "logs/arena", speech: "1" };
     for (let index = 0; index < args.length; index += 2) {
         const name = args[index].slice(2);
         if (!args[index].startsWith("--") || !Object.hasOwn(values, name) || args[index + 1] === undefined) throw new Error("竞技场参数无效");
@@ -33,18 +34,43 @@ function parseArgs(args) {
     const requestedSeats = values["llm-seats"] === "all" ? Array.from({ length: players }, (_, seat) => seat)
         : /^\d+(,\d+)*$/.test(values["llm-seats"]) ? values["llm-seats"].split(",").map(Number) : [];
     if (!requestedSeats.length || new Set(requestedSeats).size !== requestedSeats.length || requestedSeats.some((seat) => seat >= players)) throw new Error("LLM 座位参数无效，至少指定一个座位");
+    const defaultProvider = process.env.AVALON_LLM_PROVIDER || "deepseek";
+    if (defaultProvider === "heuristic" || defaultProvider === "jev") throw new Error("请用 --seat-providers 配置 Jev 或 heuristic");
+    const providers = Array.from({ length: players }, (_, seat) => requestedSeats.includes(seat) ? defaultProvider : "heuristic");
+    const explicit = new Set();
+    if (values["seat-providers"]) for (const entry of values["seat-providers"].split(",")) {
+        const match = entry.match(/^(\d+):(deepseek|jev|heuristic)$/);
+        const seat = Number(match?.[1]) - 1;
+        if (!match || seat < 0 || seat >= players || explicit.has(seat)) throw new Error("provider 座位参数无效，座位号从 1 开始且不可重复");
+        explicit.add(seat);
+        providers[seat] = match[2];
+    }
+    const order = [...requestedSeats, ...Array.from({ length: players }, (_, seat) => seat).filter((seat) => !requestedSeats.includes(seat))];
+    const external = order.filter((seat) => providers[seat] !== "heuristic");
+    const actualOrder = [...external, ...providers.map((_, seat) => seat).filter((seat) => providers[seat] === "heuristic")];
+    const providerSeatMapping = actualOrder.map((requested, actual) => ({ requested: requested + 1, actual: actual + 1, provider: providers[requested] }));
     return { games: integer("games", 1, 100000), players, seed: integer("seed", 0, 0xffffffff), speech: integer("speech", 0, 1), out: values.out,
-        seatMapping: requestedSeats.map((requested, actual) => ({ requested, actual })) };
+        seatMapping: external.map((requested, actual) => ({ requested, actual })), providerSeatMapping };
 }
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));
-    const provider = providerFromEnv();
-    const stringify = (value) => JSON.stringify(value, (_key, item) => typeof item === "string" ? provider.redact(item) : item);
+    const providers = new Map();
+    for (const { provider: name } of options.providerSeatMapping) {
+        if (name === "heuristic" || providers.has(name)) continue;
+        providers.set(name, name === "jev" ? jevProviderFromEnv() : providerFromEnv({ ...process.env, AVALON_LLM_PROVIDER: name }));
+    }
+    const redact = (text) => [...providers.values()].reduce((value, provider) => provider.redact(value), text);
+    const stringify = (value) => JSON.stringify(value, (_key, item) => typeof item === "string" ? redact(item) : item);
     fs.mkdirSync(options.out, { recursive: true });
     const stamp = `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}`;
     const summary = { goodWins: 0, evilWins: 0, assassinations: 0, assassinationHits: 0, assassinationHitRate: 0,
-        llmCalls: 0, fallbacks: 0, tokens: { prompt: 0, completion: 0 }, steps: 0, averageStepMs: 0, seatMapping: options.seatMapping };
+        llmCalls: 0, fallbacks: 0, tokens: { prompt: 0, completion: 0 }, steps: 0, averageStepMs: 0, seatMapping: options.seatMapping,
+        providerSeatMapping: options.providerSeatMapping, providerSeatBase: 1, byProvider: Object.fromEntries(
+            [...new Set(options.providerSeatMapping.map((item) => item.provider))].map((name) => [name, {
+                games: 0, goodGames: 0, goodWins: 0, goodWinRate: 0, evilGames: 0, evilWins: 0, evilWinRate: 0,
+                assassinations: 0, assassinationHits: 0, assassinationHitRate: 0, calls: 0, fallbacks: 0, tokens: { prompt: 0, completion: 0 },
+            }])) };
     let totalMs = 0;
     for (let game = 1; game <= options.games; game += 1) {
         const file = path.join(options.out, `${stamp}-g${game}.jsonl`);
@@ -56,21 +82,34 @@ async function main() {
             const config = { minPlayers: 5, maxPlayers: 10, nightMs: 1, aiDelayMs: 1, aiSpeechMs: 1,
                 speakMs: 1e9, proposeMs: 1e9, voteMs: 1e9, missionMs: 1e9, ladyMs: 1e9, excaliburMs: 1e9, assassinMs: 1e9 };
             const room = new AvalonRoom(`arena-${game}`, { config, send: () => {}, clock: () => now, random: seeded(options.seed + game - 1), targetPlayers: options.players });
-            const agent = new LlmAgent(provider, { random: seeded(options.seed + game - 1) });
+            const agents = new Map([...providers].map(([name, provider]) => [name, new LlmAgent(provider, { random: seeded(options.seed + game - 1) })]));
             const llmSeats = new Set(options.seatMapping.map((item) => item.actual));
             for (const { actual } of options.seatMapping) room.join(`llm-${actual}`, `旅人${actual}`);
+            // A room needs one ready human to start; hand this bootstrap seat to the built-in AI afterwards.
+            if (!llmSeats.size) room.join("bootstrap", "旅人0");
             for (const player of [...room.players]) room.ready(player.userId, true);
+            if (!llmSeats.size) room.players[0].isAi = true;
             write({ type: "game", game, seed: options.seed + game - 1, players: options.players, speech: options.speech, seatMapping: options.seatMapping,
+                providerSeatMapping: options.providerSeatMapping, providerSeatBase: 1,
                 seatNumbering: { seatIndexBase: 0, speechSeatBase: 1, modelSeatBase: 1 },
                 actualLlmSeats: [...llmSeats], heuristicSeats: room.players.filter((player) => player.isAi).map((player) => player.seatIndex) });
 
             const record = (seat, action, decision) => {
                 summary.steps += 1;
                 totalMs += decision.ms;
-                if (decision.provider === "llm") summary.llmCalls += 1;
+                const seatProvider = options.providerSeatMapping[seat].provider;
+                const group = summary.byProvider[seatProvider];
+                const calls = decision.calls ?? 0;
+                summary.llmCalls += calls;
+                group.calls += calls;
                 if (decision.fallback) summary.fallbacks += 1;
+                if (decision.fallback) group.fallbacks += 1;
+                group.tokens.prompt += decision.tokens.prompt;
+                group.tokens.completion += decision.tokens.completion;
                 if (action === "assassinate") summary.assassinations += 1;
-                write({ type: "action", step: summary.steps, round: room.round, seat, role: roleNames[room.viewOf(seat).role], action, ...decision });
+                if (action === "assassinate") group.assassinations += 1;
+                write({ type: "action", step: summary.steps, round: room.round, seat, seatNumber: seat + 1, seatProvider,
+                    role: roleNames[room.viewOf(seat).role], action, ...decision, ...(action === "speak" ? { speech: decision.value } : {}) });
             };
 
             // Observe AI actions without replacing their decisions or changing the room implementation.
@@ -94,6 +133,7 @@ async function main() {
                 const seat = room.pendingSeats().find((candidate) => llmSeats.has(candidate));
                 if (seat === undefined) { now += 2; room.tick(); continue; }
                 const userId = room.players[seat].userId;
+                const agent = agents.get(options.providerSeatMapping[seat].provider);
                 const run = async (action) => {
                     const decision = await agent[action](room, seat);
                     record(seat, action, decision);
@@ -101,7 +141,10 @@ async function main() {
                 };
                 switch (room.stage) {
                     case Stage.Speaking:
-                        if (options.speech) room.chat(userId, await run("speak"));
+                        if (options.speech || options.providerSeatMapping[seat].provider === "jev") {
+                            const speech = await run("speak");
+                            if (speech !== null) room.chat(userId, speech);
+                        }
                         else record(seat, "skipSpeech", { value: null, reason: "--speech 0", provider: "none", fallback: false, tokens: { prompt: 0, completion: 0 }, ms: 0 });
                         room.endSpeech(userId);
                         break;
@@ -137,11 +180,33 @@ async function main() {
             if (!room.outcome) throw new Error("竞技场超过总步数上限");
             if (room.outcome.isGoodWin) summary.goodWins += 1;
             else summary.evilWins += 1;
-            if (room.outcome.winReason.startsWith("刺客选择了") && !room.outcome.isGoodWin) summary.assassinationHits += 1;
+            const hit = room.outcome.winReason.startsWith("刺客选择了") && !room.outcome.isGoodWin;
+            if (hit) summary.assassinationHits += 1;
+            for (const [name, group] of Object.entries(summary.byProvider)) {
+                const seats = room.players.filter((player) => options.providerSeatMapping[player.seatIndex].provider === name);
+                group.games += 1;
+                if (seats.some((player) => !isBadRole(player.role))) {
+                    group.goodGames += 1;
+                    if (room.outcome.isGoodWin) group.goodWins += 1;
+                }
+                if (seats.some((player) => isBadRole(player.role))) {
+                    group.evilGames += 1;
+                    if (!room.outcome.isGoodWin) group.evilWins += 1;
+                }
+                if (hit && seats.some((player) => player.role === Role.Assassin)) group.assassinationHits += 1;
+            }
             write({ type: "outcome", ...room.outcome });
         } finally { fs.closeSync(fd); }
     }
-    summary.tokens = provider.usage;
+    for (const provider of providers.values()) {
+        summary.tokens.prompt += provider.usage.prompt;
+        summary.tokens.completion += provider.usage.completion;
+    }
+    for (const group of Object.values(summary.byProvider)) {
+        group.goodWinRate = group.goodGames ? group.goodWins / group.goodGames : 0;
+        group.evilWinRate = group.evilGames ? group.evilWins / group.evilGames : 0;
+        group.assassinationHitRate = group.assassinations ? group.assassinationHits / group.assassinations : 0;
+    }
     summary.assassinationHitRate = summary.assassinations ? summary.assassinationHits / summary.assassinations : 0;
     summary.averageStepMs = summary.steps ? totalMs / summary.steps : 0;
     console.log(stringify({ type: "summary", ...summary }));
