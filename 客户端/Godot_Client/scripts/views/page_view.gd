@@ -1026,7 +1026,9 @@ func build_page() -> void:
 				var column := i % per_row
 				var in_row := per_row if row == 0 else cards - per_row
 				var middle := (in_row - 1) / 2.0
-				art("card_role_back", 375 - (in_row * (card_width + 8)) / 2.0 + column * (card_width + 8), 300 + row * 240 + abs(column - middle) * 24, card_width)
+				var dealt := art("card_role_back", 375 - (in_row * (card_width + 8)) / 2.0 + column * (card_width + 8), 300 + row * 240 + abs(column - middle) * 24, card_width)
+				if not _built_once:
+					AvalonEffects.slide_in(dealt, 0.08 * i, Vector2(0, 260), 0.3)
 			text_label("正在随机分配角色", 95, 850, 560, 70, 34)
 			text_label("请保持身份保密", 95, 930, 560, 48, 22)
 			button("查看身份", 185, 1055, 380, func(): controller.show_page(6))
@@ -1035,8 +1037,9 @@ func build_page() -> void:
 			var card := art("card_role_front", 130, 220, 490)
 			var emblem := art(str(ROLE_ART.get(model.my_role, "avatar-empty-slot")), 275, 320, 200)
 			if not _built_once:
-				AvalonEffects.pop_in(card, 0.3)
-				AvalonEffects.pop_in(emblem, 0.4)
+				AvalonEffects.flip_reveal(art("card_role_back", 130, 220, 490), card, 0.2, 0.4)
+				AvalonEffects.pop_in(emblem, 0.3, 0.5)
+			var card_text_from := layer.get_child_count()
 			text_label(T.role_name(model.my_role) + ("（坏人阵营）" if T.is_bad_role(model.my_role) else "（好人阵营）"), 140, 635, 470, 65, 34)
 			text_label(identity_hint(), 165, 708, 420, 112, 20)
 			text_label("请记住你的身份，不要向其他玩家展示", 110, 830, 530, 50, 20)
@@ -1044,6 +1047,10 @@ func build_page() -> void:
 			var seen: Array = model.visible_seats.slice(0, 4)
 			for i in seen.size():
 				player_avatar(int(seen[i]), 375 - seen.size() * 60 + i * 120 + 28, 878, 64)
+			# Everything written on the card waits until it has turned over.
+			if not _built_once:
+				for k in range(card_text_from, layer.get_child_count()):
+					AvalonEffects.slide_in(layer.get_child(k), 0.55, Vector2.ZERO, 0.3)
 			turn_alert(975)
 			button("确认身份", 160, 1035, 430, func(): controller.confirm_identity())
 		7:
@@ -1214,8 +1221,11 @@ func build_page() -> void:
 						var seat: int = voters[i]
 						var x := left + (i % 5) * 58.0
 						var y := 778.0 + (i / 5) * 76.0
-						art(avatar_name(seat), x + 5, y, 48)
-						text_label("%d号" % (seat + 1), x, y + 48, 58, 24, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if seat == model.my_seat() else color)
+						var face := art(avatar_name(seat), x + 5, y, 48)
+						var number := text_label("%d号" % (seat + 1), x, y + 48, 58, 24, 16, HORIZONTAL_ALIGNMENT_CENTER, GOLD if seat == model.my_seat() else color)
+						if fresh:
+							AvalonEffects.pop_in(face, 0.2, 0.3 + (side * 5 + i) * 0.07)
+							AvalonEffects.pop_in(number, 0.2, 0.3 + (side * 5 + i) * 0.07)
 			else:
 				# The cards as played, successes first; the first time they turn over one by one.
 				var round_no := int(model.last_mission.get("round", model.round))
@@ -1269,8 +1279,9 @@ func build_page() -> void:
 				headline += "  ·  你%s" % ("赢了" if won else "输了")
 			var good_won: bool = fr.get("winner") == true
 			var title := text_label(headline, 60, 180, 630, 80, 40, HORIZONTAL_ALIGNMENT_CENTER, BLUE if good_won else RED)
+			var end_fresh := controller.end_serial != _played_end
 			# Once per game end: the title pops, and a loss shakes the page.
-			if controller.end_serial != _played_end:
+			if end_fresh:
 				_played_end = controller.end_serial
 				effects_played.append(["end", _played_end])
 				AvalonEffects.pop_in(title, 0.35)
@@ -1294,12 +1305,16 @@ func build_page() -> void:
 				var role := int(player.get("role", 0))
 				var row_y := 440 + i * row
 				# The winning side's rows are lit.
+				var row_parts: Array = []
 				if T.is_bad_role(role) != good_won:
 					var side_color := RED if T.is_bad_role(role) else BLUE
-					dark_panel(158, row_y + 2, 434, row - 8, Color(side_color.r, side_color.g, side_color.b, 0.55), Color(side_color.r, side_color.g, side_color.b, 0.14), 1, 8)
+					row_parts.append(dark_panel(158, row_y + 2, 434, row - 8, Color(side_color.r, side_color.g, side_color.b, 0.55), Color(side_color.r, side_color.g, side_color.b, 0.14), 1, 8))
 				if ROLE_ART.has(role):
-					art(ROLE_ART[role], 166, row_y + (row - 4) / 2.0 - 25, 50)
-				text_label("%d. %s  %s%s" % [i + 1, display_name(str(player.get("nickname", "玩家"))).left(7), T.role_name(role), tag], 220, row_y, 380, row - 4, 21, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else BLUE)
+					row_parts.append(art(ROLE_ART[role], 166, row_y + (row - 4) / 2.0 - 25, 50))
+				row_parts.append(text_label("%d. %s  %s%s" % [i + 1, display_name(str(player.get("nickname", "玩家"))).left(7), T.role_name(role), tag], 220, row_y, 380, row - 4, 21, HORIZONTAL_ALIGNMENT_LEFT, RED if T.is_bad_role(role) else BLUE))
+				if end_fresh:
+					for part: Control in row_parts:
+						AvalonEffects.slide_in(part, 0.45 + i * 0.07)
 			# Buttons sit below the roster panel (which ends near y 1075), in two rows.
 			button("再来一局", 90, 1092, 275, func(): controller.play_again())
 			button("查看复盘", 385, 1092, 275, func(): controller.show_final_replay(), "button_secondary_dark")

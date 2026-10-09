@@ -43,15 +43,18 @@ static func shake(target: Control, strength := 12.0, duration := 0.35) -> void:
 	target.set_meta("shake_tween", tween)
 
 ## Grows from 60 % to full size around its centre while fading in.
-static func pop_in(node: Control, duration := 0.25) -> void:
+## `delay` staggers a row of them.
+static func pop_in(node: Control, duration := 0.25, delay := 0.0) -> void:
 	if not is_instance_valid(node):
 		return
 	node.pivot_offset = node.size / 2.0
 	node.scale = Vector2(0.6, 0.6)
 	node.modulate.a = 0.0
-	var tween := node.create_tween().set_parallel()
+	var tween := node.create_tween()
+	if delay > 0.0:
+		tween.tween_interval(delay)
 	tween.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.tween_property(node, "modulate:a", 1.0, duration)
+	tween.parallel().tween_property(node, "modulate:a", 1.0, duration)
 
 static func fade_in(node: CanvasItem, duration := 0.2) -> void:
 	if not is_instance_valid(node):
@@ -135,3 +138,16 @@ static func banner(host: Node, text: String, hold := 1.0) -> void:
 	tween.tween_interval(0.25 + hold)
 	tween.tween_property(panel, "modulate:a", 0.0, 0.3)
 	tween.tween_callback(canvas.queue_free)
+
+## Slides in from `offset` while fading in, after `delay`; for lists that fill in row by row.
+static func slide_in(node: Control, delay := 0.0, offset := Vector2(-48, 0), duration := 0.22) -> void:
+	if not is_instance_valid(node):
+		return
+	var home := node.position
+	node.position = home + offset
+	node.modulate.a = 0.0
+	var tween := node.create_tween()
+	if delay > 0.0:
+		tween.tween_interval(delay)
+	tween.tween_property(node, "position", home, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tween.parallel().tween_property(node, "modulate:a", 1.0, duration)
